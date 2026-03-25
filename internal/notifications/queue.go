@@ -882,7 +882,7 @@ func (nq *NotificationQueue) CancelByAlertIDs(alertIDs []string) error {
 
 	// Query pending/sending notifications
 	query := `
-		SELECT id, alerts
+		SELECT id, type, alerts
 		FROM notification_queue
 		WHERE status IN ('pending', 'sending')
 	`
@@ -900,9 +900,13 @@ func (nq *NotificationQueue) CancelByAlertIDs(alertIDs []string) error {
 
 	for rows.Next() {
 		var notifID string
+		var notifType string
 		var alertsJSON []byte
-		if err := rows.Scan(&notifID, &alertsJSON); err != nil {
+		if err := rows.Scan(&notifID, &notifType, &alertsJSON); err != nil {
 			log.Error().Err(err).Msg("Failed to scan notification for cancellation")
+			continue
+		}
+		if !queueTypeCancelableOnResolve(notifType) {
 			continue
 		}
 
@@ -948,4 +952,18 @@ func (nq *NotificationQueue) CancelByAlertIDs(alertIDs []string) error {
 	}
 
 	return nil
+}
+
+func queueTypeCancelableOnResolve(notifType string) bool {
+	baseType, event := normalizeQueueType(notifType)
+	if event == eventResolved {
+		return false
+	}
+
+	switch baseType {
+	case "email", "webhook", "apprise":
+		return true
+	default:
+		return false
+	}
 }
