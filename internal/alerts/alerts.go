@@ -2871,6 +2871,44 @@ func sanitizeRAIDDevice(device string) string {
 	return sanitizeHostComponent(device)
 }
 
+func hostMatchesVendorHint(host models.Host, hints ...string) bool {
+	fields := []string{host.OSName, host.DisplayName, host.Hostname}
+	for _, field := range fields {
+		value := strings.ToLower(strings.TrimSpace(field))
+		if value == "" {
+			continue
+		}
+		for _, hint := range hints {
+			if strings.Contains(value, hint) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isSynologyLikeHost(host models.Host) bool {
+	return hostMatchesVendorHint(host, "synology", "dsm")
+}
+
+func isQNAPLikeHost(host models.Host) bool {
+	return hostMatchesVendorHint(host, "qnap", "qts", "quts")
+}
+
+func shouldSuppressHostRAIDArray(host models.Host, array models.HostRAIDArray) bool {
+	deviceLower := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(array.Device, "/dev/")))
+	switch {
+	case deviceLower == "":
+		return false
+	case isSynologyLikeHost(host):
+		return deviceLower == "md0" || deviceLower == "md1"
+	case isQNAPLikeHost(host):
+		return deviceLower == "md9" || deviceLower == "md13"
+	default:
+		return false
+	}
+}
+
 func hostDiskResourceID(host models.Host, disk models.Disk) (string, string) {
 	label := strings.TrimSpace(disk.Mountpoint)
 	if label == "" {
@@ -3076,10 +3114,9 @@ func (m *Manager) CheckHost(host models.Host) {
 	// Check RAID arrays for degraded or failed state
 	if len(host.RAID) > 0 {
 		for _, array := range host.RAID {
-			// Skip Synology internal system arrays (md0/md1) which often report false positives.
-			// DSM handles these differently and they're not user-facing storage arrays.
-			deviceLower := strings.ToLower(strings.TrimPrefix(array.Device, "/dev/"))
-			if deviceLower == "md0" || deviceLower == "md1" {
+			// Skip vendor-managed system arrays that are not user-facing storage pools.
+			// Synology uses md0/md1, while QNAP uses md9/md13 for internal OS volumes.
+			if shouldSuppressHostRAIDArray(host, array) {
 				// Still clear any existing alerts for these devices
 				alertID := fmt.Sprintf("host-%s-raid-%s", host.ID, sanitizeRAIDDevice(array.Device))
 				m.clearAlert(alertID)

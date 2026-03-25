@@ -19,6 +19,7 @@ func TestSynologyRAIDSuppression(t *testing.T) {
 	host := models.Host{
 		ID:          "syno-1",
 		DisplayName: "Synology NAS",
+		OSName:      "Synology DSM",
 		Hostname:    "synology",
 		Status:      "online",
 		LastSeen:    time.Now(),
@@ -94,6 +95,7 @@ func TestSynologyRAIDClearing(t *testing.T) {
 	host := models.Host{
 		ID:          "syno-1",
 		DisplayName: "Synology NAS",
+		OSName:      "Synology DSM",
 		Hostname:    "synology",
 		Status:      "online",
 		LastSeen:    time.Now(),
@@ -129,6 +131,7 @@ func TestHostDisableClearsRAID(t *testing.T) {
 	host := models.Host{
 		ID:          "host-raid",
 		DisplayName: "RAID Host",
+		OSName:      "Synology DSM",
 		Hostname:    "raid-host",
 		Status:      "online",
 		LastSeen:    time.Now(),
@@ -176,5 +179,106 @@ func TestHostDisableClearsRAID(t *testing.T) {
 
 	if exists {
 		t.Error("expected RAID alert to be cleared when host alerts are disabled")
+	}
+}
+
+func TestQNAPRAIDSuppression(t *testing.T) {
+	m := newTestManager(t)
+	m.ClearActiveAlerts()
+	m.mu.Lock()
+	m.config.TimeThreshold = 0
+	m.config.TimeThresholds = map[string]int{}
+	m.mu.Unlock()
+
+	host := models.Host{
+		ID:          "qnap-1",
+		DisplayName: "QNAP NAS",
+		OSName:      "QuTS hero",
+		Hostname:    "qnap",
+		Status:      "online",
+		LastSeen:    time.Now(),
+		RAID: []models.HostRAIDArray{
+			{
+				Device:        "/dev/md9", // Suppressed internal OS array
+				Level:         "raid1",
+				State:         "degraded",
+				FailedDevices: 1,
+			},
+			{
+				Device:        "/dev/md13", // Suppressed internal OS array
+				Level:         "raid1",
+				State:         "degraded",
+				FailedDevices: 1,
+			},
+			{
+				Device:        "/dev/md0", // User-facing array on many QNAP systems
+				Level:         "raid5",
+				State:         "degraded",
+				FailedDevices: 1,
+			},
+		},
+	}
+
+	m.CheckHost(host)
+
+	alerts := m.GetActiveAlerts()
+	var md0Found, md9Found, md13Found bool
+
+	for _, a := range alerts {
+		if strings.Contains(a.ID, "md0") {
+			md0Found = true
+		}
+		if strings.Contains(a.ID, "md9") {
+			md9Found = true
+		}
+		if strings.Contains(a.ID, "md13") {
+			md13Found = true
+		}
+	}
+
+	if md9Found {
+		t.Error("expected md9 alert to be suppressed for QNAP")
+	}
+	if md13Found {
+		t.Error("expected md13 alert to be suppressed for QNAP")
+	}
+	if !md0Found {
+		t.Error("expected md0 alert to be created for QNAP data array")
+	}
+}
+
+func TestGenericHostMD0IsNotSuppressed(t *testing.T) {
+	m := newTestManager(t)
+	m.ClearActiveAlerts()
+	m.mu.Lock()
+	m.config.TimeThreshold = 0
+	m.config.TimeThresholds = map[string]int{}
+	m.mu.Unlock()
+
+	host := models.Host{
+		ID:          "linux-1",
+		DisplayName: "Linux Host",
+		OSName:      "Ubuntu",
+		Hostname:    "linux-host",
+		Status:      "online",
+		LastSeen:    time.Now(),
+		RAID: []models.HostRAIDArray{
+			{
+				Device:        "/dev/md0",
+				Level:         "raid1",
+				State:         "degraded",
+				FailedDevices: 1,
+			},
+		},
+	}
+
+	m.CheckHost(host)
+
+	m.mu.RLock()
+	_, exists := m.activeAlerts["host-linux-1-raid-md0"]
+	m.mu.RUnlock()
+
+	if !exists {
+		t.Error("expected md0 alert to be created for generic hosts")
 	}
 }
