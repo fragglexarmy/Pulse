@@ -12,7 +12,7 @@ export type LayoutMode = 'default' | 'full-width';
  * Creates a reactive store for layout mode preference
  * Syncs with both localStorage (for immediate access) and server (for persistence across updates)
  */
-function createLayoutStore() {
+export function createLayoutStore() {
     const stored = localStorage.getItem(STORAGE_KEYS.FULL_WIDTH_MODE);
     const initialMode: LayoutMode = stored === 'full-width' ? 'full-width' : 'default';
 
@@ -38,6 +38,16 @@ function createLayoutStore() {
 
     const isFullWidth = () => mode() === 'full-width';
 
+    const applyServerMode = (serverFullWidthMode: boolean | undefined) => {
+        if (serverFullWidthMode !== undefined) {
+            const serverMode: LayoutMode = serverFullWidthMode ? 'full-width' : 'default';
+            localStorage.setItem(STORAGE_KEYS.FULL_WIDTH_MODE, serverMode);
+            setModeInternal(serverMode);
+            logger.debug('Applied full-width mode from server', { mode: serverMode });
+        }
+        setHasLoadedFromServer(true);
+    };
+
     /**
      * Load full-width preference from server (called after auth)
      * Always uses server preference after auth to keep localStorage in sync
@@ -50,13 +60,7 @@ function createLayoutStore() {
 
         try {
             const settings = await SettingsAPI.getSystemSettings();
-            if (settings.fullWidthMode !== undefined) {
-                const serverMode: LayoutMode = settings.fullWidthMode ? 'full-width' : 'default';
-                localStorage.setItem(STORAGE_KEYS.FULL_WIDTH_MODE, serverMode);
-                setModeInternal(serverMode);
-                logger.debug('Loaded full-width mode from server', { mode: serverMode });
-            }
-            setHasLoadedFromServer(true);
+            applyServerMode(settings.fullWidthMode);
         } catch (error) {
             logger.warn('Failed to load full-width mode from server', error);
         }
@@ -67,6 +71,7 @@ function createLayoutStore() {
         setMode,
         toggle,
         isFullWidth,
+        applyServerMode,
         loadFromServer,
     };
 }

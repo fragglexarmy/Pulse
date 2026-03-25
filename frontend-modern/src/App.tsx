@@ -614,8 +614,7 @@ function App() {
               }
             }
             setHasLoadedServerTheme(true);
-            // Also load full-width mode from server
-            layoutStore.loadFromServer();
+            layoutStore.applyServerMode(systemSettings.fullWidthMode);
           } catch (error) {
             logger.error('Failed to load theme from server', error);
             // Ensure settings are marked as loaded so UI doesn't stay in loading state
@@ -625,7 +624,10 @@ function App() {
           setHasLoadedServerTheme(true);
           // Still load system settings for other features (Docker update actions, etc.)
           SettingsAPI.getSystemSettings()
-            .then((settings) => updateSystemSettingsFromResponse(settings))
+            .then((settings) => {
+              updateSystemSettingsFromResponse(settings);
+              layoutStore.applyServerMode(settings.fullWidthMode);
+            })
             .catch((error) => {
               logger.warn('Failed to load system settings', error);
               markSystemSettingsLoadedWithDefaults();
@@ -675,8 +677,7 @@ function App() {
               }
             }
             setHasLoadedServerTheme(true);
-            // Also load full-width mode from server
-            layoutStore.loadFromServer();
+            layoutStore.applyServerMode(systemSettings.fullWidthMode);
           } catch (error) {
             logger.error('Failed to load theme from server', error);
             // Ensure settings are marked as loaded so UI doesn't stay in loading state
@@ -686,7 +687,10 @@ function App() {
           setHasLoadedServerTheme(true);
           // Still load system settings for other features (Docker update actions, etc.)
           SettingsAPI.getSystemSettings()
-            .then((settings) => updateSystemSettingsFromResponse(settings))
+            .then((settings) => {
+              updateSystemSettingsFromResponse(settings);
+              layoutStore.applyServerMode(settings.fullWidthMode);
+            })
             .catch((error) => {
               logger.warn('Failed to load system settings', error);
               markSystemSettingsLoadedWithDefaults();
@@ -747,8 +751,7 @@ function App() {
               }
             }
             setHasLoadedServerTheme(true);
-            // Also load full-width mode from server
-            layoutStore.loadFromServer();
+            layoutStore.applyServerMode(systemSettings.fullWidthMode);
           } catch (error) {
             logger.error('Failed to load theme from server', error);
             // Ensure settings are marked as loaded so UI doesn't stay in loading state
@@ -759,7 +762,10 @@ function App() {
           setHasLoadedServerTheme(true);
           // Still load system settings for other features (Docker update actions, etc.)
           SettingsAPI.getSystemSettings()
-            .then((settings) => updateSystemSettingsFromResponse(settings))
+            .then((settings) => {
+              updateSystemSettingsFromResponse(settings);
+              layoutStore.applyServerMode(settings.fullWidthMode);
+            })
             .catch((error) => {
               logger.warn('Failed to load system settings', error);
               // Ensure settings are marked as loaded so UI doesn't stay in loading state
