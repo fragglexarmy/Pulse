@@ -145,6 +145,43 @@ func TestPVESetupScript_ConfiguresPulseMonitorRoleSafely(t *testing.T) {
 	}
 }
 
+func TestPVESetupScript_PreservesAuthorizedKeysSymlinkAndQuotesSensorsKey(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := &config.Config{
+		DataPath:   tempDir,
+		ConfigPath: tempDir,
+	}
+
+	handlers := newTestConfigHandlers(t, cfg)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/setup-script?type=pve&host=http://SENTINEL_HOST:8006&pulse_url=http://SENTINEL_URL:7656", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.HandleSetupScript(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (%s)", rr.Code, rr.Body.String())
+	}
+
+	script := rr.Body.String()
+
+	wantSnippets := []string{
+		`resolve_authorized_keys_path() {`,
+		`UNINSTALL_AUTH_KEYS="$(resolve_authorized_keys_path)"`,
+		`AUTH_KEYS="$(resolve_authorized_keys_path)"`,
+		`SSH_SENSORS_KEY_OPTIONS='command="sensors -j",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty'`,
+		`SSH_SENSORS_KEY_ENTRY="${SSH_SENSORS_KEY_OPTIONS} ${SSH_SENSORS_PUBLIC_KEY} # pulse-sensors"`,
+		`SSH_SENSORS_PUBLIC_KEY='ssh-ed25519 `,
+	}
+
+	for _, snippet := range wantSnippets {
+		if !containsString(script, snippet) {
+			t.Fatalf("expected generated script to contain:\n%s\n\nGot (first 800 chars):\n%s", snippet, truncate(script, 800))
+		}
+	}
+}
+
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
 		(findSubstring(s, substr) >= 0))

@@ -89,6 +89,10 @@ func sanitizeSetupAuthToken(token string) (string, error) {
 	return trimmed, nil
 }
 
+func shellSingleQuoteLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
 // buildPulseMonitorTokenName returns a deterministic Pulse-managed token name.
 // The result is stable across reruns for the same Pulse instance.
 func buildPulseMonitorTokenName(candidates ...string) string {
@@ -4071,6 +4075,25 @@ detect_lxc_ctid() {
     echo ""
 }
 
+resolve_authorized_keys_path() {
+    local auth_keys="/root/.ssh/authorized_keys"
+    if [ -L "$auth_keys" ]; then
+        local link_target=""
+        link_target=$(readlink "$auth_keys" 2>/dev/null || true)
+        if [ -n "$link_target" ]; then
+            case "$link_target" in
+                /*)
+                    auth_keys="$link_target"
+                    ;;
+                *)
+                    auth_keys="$(cd "$(dirname "$auth_keys")" && pwd)/$link_target"
+                    ;;
+            esac
+        fi
+    fi
+    printf '%%s\n' "$auth_keys"
+}
+
 ENVIRONMENT=$(detect_environment)
 
 case "$ENVIRONMENT" in
@@ -4177,10 +4200,7 @@ if [[ $MAIN_ACTION =~ ^[2Rr]$ ]]; then
     if true; then
         # Remove SSH keys from authorized_keys (only Pulse-managed entries)
         # Resolve symlink first (Proxmox symlinks authorized_keys to /etc/pve/priv/)
-        UNINSTALL_AUTH_KEYS="/root/.ssh/authorized_keys"
-        if [ -L "$UNINSTALL_AUTH_KEYS" ]; then
-            UNINSTALL_AUTH_KEYS="$(readlink -f "$UNINSTALL_AUTH_KEYS")"
-        fi
+        UNINSTALL_AUTH_KEYS="$(resolve_authorized_keys_path)"
         if [ -f "$UNINSTALL_AUTH_KEYS" ]; then
             echo "  • Removing SSH keys from authorized_keys..."
             TMP_AUTH_KEYS="$(mktemp /tmp/.pulse-authorized-keys.XXXXXX)"
@@ -4592,8 +4612,9 @@ echo "Temperature Monitoring Setup (Optional)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-SSH_SENSORS_PUBLIC_KEY="%s"
-SSH_SENSORS_KEY_ENTRY="command=\"sensors -j\",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ${SSH_SENSORS_PUBLIC_KEY} # pulse-sensors"
+SSH_SENSORS_PUBLIC_KEY=%s
+SSH_SENSORS_KEY_OPTIONS='command="sensors -j",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty'
+SSH_SENSORS_KEY_ENTRY="${SSH_SENSORS_KEY_OPTIONS} ${SSH_SENSORS_PUBLIC_KEY} # pulse-sensors"
 TEMPERATURE_ENABLED=false
 
 if [ -n "$SSH_SENSORS_PUBLIC_KEY" ]; then
@@ -4630,10 +4651,7 @@ if [ -n "$SSH_SENSORS_PUBLIC_KEY" ]; then
 
         # Add key to root's authorized_keys
         # Resolve symlink first (Proxmox symlinks authorized_keys to /etc/pve/priv/)
-        AUTH_KEYS="/root/.ssh/authorized_keys"
-        if [ -L "$AUTH_KEYS" ]; then
-            AUTH_KEYS="$(readlink -f "$AUTH_KEYS")"
-        fi
+        AUTH_KEYS="$(resolve_authorized_keys_path)"
 
         mkdir -p "$(dirname "$AUTH_KEYS")"
         chmod 700 /root/.ssh 2>/dev/null || true
@@ -4772,7 +4790,7 @@ fi
 			pulseTokenScope,
 			authToken,
 			storagePerms,
-			sshKeys.SensorsPublicKey)
+			shellSingleQuoteLiteral(sshKeys.SensorsPublicKey))
 
 	} else { // PBS
 		script = fmt.Sprintf(`#!/bin/bash
