@@ -301,6 +301,33 @@ func TestHandleTestNodeConfig_InvalidType(t *testing.T) {
 	}
 }
 
+func TestHandleTestNodeConfig_AcceptsTokenAliases(t *testing.T) {
+	cfg := &config.Config{DataPath: t.TempDir()}
+	handler := newTestConfigHandlers(t, cfg)
+
+	body := []byte(`{
+		"type":"pve",
+		"host":"127.0.0.1:1",
+		"tokenId":"pulse-monitor@pam!pulse-token",
+		"tokenSecret":"secret-token"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/nodes/test-config", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.HandleTestNodeConfig(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["message"] == "Authentication credentials required" {
+		t.Fatalf("expected token aliases to reach connection testing, got auth validation error")
+	}
+}
+
 func TestHandleTestNode_InvalidPath(t *testing.T) {
 	cfg := &config.Config{DataPath: t.TempDir()}
 	handler := newTestConfigHandlers(t, cfg)

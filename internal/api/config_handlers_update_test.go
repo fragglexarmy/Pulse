@@ -81,6 +81,27 @@ func TestHandleUpdateNode(t *testing.T) {
 			},
 		},
 		{
+			name:   "success_switch_to_token_alias_fields",
+			nodeID: "pve-0",
+			requestBody: map[string]interface{}{
+				"tokenId":     "root@pam!alias-token",
+				"tokenSecret": "alias-secret",
+			},
+			expectedStatus: http.StatusOK,
+			verifyConfig: func(t *testing.T, c *config.Config) {
+				node := c.PVEInstances[0]
+				if node.TokenName != "root@pam!alias-token" {
+					t.Errorf("tokenName not updated from tokenId alias, got %q", node.TokenName)
+				}
+				if node.TokenValue != "alias-secret" {
+					t.Errorf("tokenValue not updated from tokenSecret alias, got %q", node.TokenValue)
+				}
+				if node.Password != "" {
+					t.Errorf("password not cleared when switching to token aliases")
+				}
+			},
+		},
+		{
 			name:   "success_switch_back_to_password",
 			nodeID: "pve-0",
 			requestBody: map[string]interface{}{

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rcourtman/pulse-go-rewrite/internal/config"
@@ -123,5 +124,28 @@ func TestHandleTestConnection(t *testing.T) {
 				tt.verifyResponse(t, response)
 			}
 		})
+	}
+}
+
+func TestHandleTestConnection_AcceptsTokenAliases(t *testing.T) {
+	cfg := &config.Config{DataPath: t.TempDir()}
+	handler := newTestConfigHandlers(t, cfg)
+
+	body := []byte(`{
+		"type":"pve",
+		"host":"127.0.0.1:1",
+		"tokenId":"pulse-monitor@pam!pulse-token",
+		"tokenSecret":"secret-token"
+	}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/nodes/test-connection", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.HandleTestConnection(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "Authentication credentials required") {
+		t.Fatalf("expected token alias fields to be accepted, got auth validation error: %s", rec.Body.String())
 	}
 }

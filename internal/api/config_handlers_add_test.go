@@ -154,6 +154,35 @@ func TestHandleAddNode(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "success_add_pve_token_alias_fields",
+			requestBody: map[string]interface{}{
+				"name":        "test-token-pve-alias",
+				"type":        "pve",
+				"host":        "10.0.0.4",
+				"tokenId":     "root@pam!alias-token",
+				"tokenSecret": "alias-secret",
+			},
+			expectedStatus: http.StatusCreated,
+			verifyConfig: func(t *testing.T, c *config.Config) {
+				found := false
+				for _, node := range c.PVEInstances {
+					if node.Name == "test-token-pve-alias" {
+						found = true
+						if node.TokenName != "root@pam!alias-token" {
+							t.Errorf("expected token name 'root@pam!alias-token', got '%s'", node.TokenName)
+						}
+						if node.TokenValue != "alias-secret" {
+							t.Errorf("expected token value 'alias-secret', got '%s'", node.TokenValue)
+						}
+						break
+					}
+				}
+				if !found {
+					t.Error("new PVE node (token alias) not found in config")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

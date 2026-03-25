@@ -582,6 +582,8 @@ type NodeConfigRequest struct {
 	Password                     string   `json:"password,omitempty"`
 	TokenName                    string   `json:"tokenName,omitempty"`
 	TokenValue                   string   `json:"tokenValue,omitempty"`
+	TokenID                      string   `json:"tokenId,omitempty"`
+	TokenSecret                  string   `json:"tokenSecret,omitempty"`
 	Fingerprint                  string   `json:"fingerprint,omitempty"`
 	VerifySSL                    *bool    `json:"verifySSL,omitempty"`
 	MonitorVMs                   *bool    `json:"monitorVMs,omitempty"`                   // PVE only
@@ -601,6 +603,20 @@ type NodeConfigRequest struct {
 	MonitorQueues                *bool    `json:"monitorQueues,omitempty"`                // PMG only
 	MonitorQuarantine            *bool    `json:"monitorQuarantine,omitempty"`            // PMG only
 	MonitorDomainStats           *bool    `json:"monitorDomainStats,omitempty"`           // PMG only
+}
+
+func (r *NodeConfigRequest) normalizeTokenAliases() {
+	r.TokenName = strings.TrimSpace(r.TokenName)
+	r.TokenValue = strings.TrimSpace(r.TokenValue)
+
+	if r.TokenName == "" {
+		r.TokenName = strings.TrimSpace(r.TokenID)
+	}
+	if r.TokenValue == "" {
+		if tokenSecret := strings.TrimSpace(r.TokenSecret); tokenSecret != "" {
+			r.TokenValue = tokenSecret
+		}
+	}
 }
 
 // NodeResponse represents a node in API responses
@@ -1684,6 +1700,7 @@ func (h *ConfigHandlers) HandleAddNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.normalizeTokenAliases()
 
 	log.Info().
 		Str("type", req.Type).
@@ -2175,6 +2192,7 @@ func (h *ConfigHandlers) HandleTestConnection(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.normalizeTokenAliases()
 
 	log.Info().
 		Str("type", req.Type).
@@ -2485,6 +2503,7 @@ func (h *ConfigHandlers) HandleUpdateNode(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.normalizeTokenAliases()
 
 	// Debug: Log the received temperatureMonitoringEnabled value
 	log.Info().
@@ -3088,6 +3107,7 @@ func (h *ConfigHandlers) HandleTestNodeConfig(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.normalizeTokenAliases()
 
 	var testResult map[string]interface{}
 
