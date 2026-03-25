@@ -92,7 +92,7 @@ const resolvePveStatusMeta = (
 
 export const PveNodesTable: Component<PveNodesTableProps> = (props) => {
   return (
-    <Card padding="none" tone="glass" class="overflow-x-auto rounded-lg">
+    <Card padding="none" tone="glass" class="w-full min-w-0 overflow-x-auto rounded-lg">
       <table class="w-full min-w-[900px] divide-y divide-gray-200 dark:divide-gray-700 text-sm">
         <thead class="bg-gray-50 dark:bg-gray-800/70">
           <tr>
@@ -373,7 +373,7 @@ const resolvePbsStatusMeta = (
 
 export const PbsNodesTable: Component<PbsNodesTableProps> = (props) => {
   return (
-    <Card padding="none" tone="glass" class="overflow-x-auto rounded-lg">
+    <Card padding="none" tone="glass" class="w-full min-w-0 overflow-x-auto rounded-lg">
       <table class="w-full min-w-[900px] divide-y divide-gray-200 dark:divide-gray-700 text-sm">
         <thead class="bg-gray-50 dark:bg-gray-800/70">
           <tr>
@@ -569,7 +569,7 @@ const resolvePmgStatusMeta = (
 
 export const PmgNodesTable: Component<PmgNodesTableProps> = (props) => {
   return (
-    <Card padding="none" tone="glass" class="overflow-x-auto rounded-lg">
+    <Card padding="none" tone="glass" class="w-full min-w-0 overflow-x-auto rounded-lg">
       <table class="w-full min-w-[900px] divide-y divide-gray-200 dark:divide-gray-700 text-sm">
         <thead class="bg-gray-50 dark:bg-gray-800/70">
           <tr>
