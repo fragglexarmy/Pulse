@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rcourtman/pulse-go-rewrite/internal/config"
+	"github.com/rcourtman/pulse-go-rewrite/internal/monitoring"
 	"github.com/rcourtman/pulse-go-rewrite/pkg/reporting"
 )
 
@@ -134,6 +137,67 @@ func TestReportingHandlers_GenerateReport(t *testing.T) {
 
 	if engine.lastReq.ResourceType != "node" || engine.lastReq.ResourceID != "node-1" {
 		t.Fatalf("unexpected request: %+v", engine.lastReq)
+	}
+}
+
+func TestReportingHandlers_GenerateReportUsesOrgMonitorMetricsStore(t *testing.T) {
+	baseDir := t.TempDir()
+	baseCfg := &config.Config{
+		DataPath:   baseDir,
+		ConfigPath: baseDir,
+	}
+
+	mtm := monitoring.NewMultiTenantMonitor(baseCfg, config.NewMultiTenantPersistence(baseDir), nil)
+	t.Cleanup(mtm.Stop)
+
+	defaultMonitor, err := mtm.GetMonitor("default")
+	if err != nil {
+		t.Fatalf("get default monitor: %v", err)
+	}
+	orgMonitor, err := mtm.GetMonitor("org-1")
+	if err != nil {
+		t.Fatalf("get org monitor: %v", err)
+	}
+
+	pointTime := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Second)
+	defaultMonitor.GetMetricsStore().Write("node", "node-1", "cpu", 1111, pointTime)
+	defaultMonitor.GetMetricsStore().Flush()
+	orgMonitor.GetMetricsStore().Write("node", "node-1", "cpu", 4242, pointTime)
+	orgMonitor.GetMetricsStore().Flush()
+
+	original := reporting.GetEngine()
+	reporting.SetEngine(reporting.NewReportEngine(reporting.EngineConfig{
+		MetricsStoreGetter: defaultMonitor.GetMetricsStore,
+	}))
+	t.Cleanup(func() { reporting.SetEngine(original) })
+
+	handler := NewReportingHandlers(mtm)
+
+	query := url.Values{
+		"format":       []string{"csv"},
+		"resourceType": []string{"node"},
+		"resourceId":   []string{"node-1"},
+		"metricType":   []string{"cpu"},
+		"start":        []string{pointTime.Add(-5 * time.Minute).Format(time.RFC3339)},
+		"end":          []string{pointTime.Add(5 * time.Minute).Format(time.RFC3339)},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/reporting?"+query.Encode(), nil)
+	req = req.WithContext(context.WithValue(req.Context(), OrgIDContextKey, "org-1"))
+	rr := httptest.NewRecorder()
+
+	handler.HandleGenerateReport(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "4242.00") {
+		t.Fatalf("expected org-specific metric value in report, got %q", body)
+	}
+	if strings.Contains(body, "1111.00") {
+		t.Fatalf("expected report to avoid default monitor metrics, got %q", body)
 	}
 }
 

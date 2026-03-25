@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,6 +29,21 @@ func NewReportingHandlers(mtMonitor *monitoring.MultiTenantMonitor) *ReportingHa
 	}
 }
 
+// resolveEngine prefers the current org's live monitor-backed engine so reports
+// read from the correct metrics store even when multiple tenant monitors exist.
+func (h *ReportingHandlers) resolveEngine(ctx context.Context) reporting.Engine {
+	if h.mtMonitor != nil {
+		orgID := GetOrgID(ctx)
+		if monitor, err := h.mtMonitor.GetMonitor(orgID); err == nil && monitor != nil && monitor.GetMetricsStore() != nil {
+			return reporting.NewReportEngine(reporting.EngineConfig{
+				MetricsStoreGetter: monitor.GetMetricsStore,
+			})
+		}
+	}
+
+	return reporting.GetEngine()
+}
+
 // HandleGenerateReport generates a report
 func (h *ReportingHandlers) HandleGenerateReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -35,7 +51,7 @@ func (h *ReportingHandlers) HandleGenerateReport(w http.ResponseWriter, r *http.
 		return
 	}
 
-	engine := reporting.GetEngine()
+	engine := h.resolveEngine(r.Context())
 	if engine == nil {
 		writeErrorResponse(w, http.StatusInternalServerError, "engine_unavailable", "Reporting engine not initialized", nil)
 		return
@@ -345,7 +361,7 @@ func (h *ReportingHandlers) HandleGenerateMultiReport(w http.ResponseWriter, r *
 		return
 	}
 
-	engine := reporting.GetEngine()
+	engine := h.resolveEngine(r.Context())
 	if engine == nil {
 		writeErrorResponse(w, http.StatusInternalServerError, "engine_unavailable", "Reporting engine not initialized", nil)
 		return
