@@ -173,6 +173,11 @@ func TestClusterEndpointEffectiveURL(t *testing.T) {
 		t.Fatalf("per-endpoint fingerprint should allow IP override, got %q", got)
 	}
 
+	endpoint.Fingerprint = ""
+	if got := clusterEndpointEffectiveURL(endpoint, true, "cluster-base-fingerprint"); got != "https://node.local:8006" {
+		t.Fatalf("base fingerprint must not force IP routing for other cluster nodes, got %q", got)
+	}
+
 	endpoint = config.ClusterEndpoint{}
 	if got := clusterEndpointEffectiveURL(endpoint, true, ""); got != "" {
 		t.Fatalf("empty endpoint = %q, want empty", got)
@@ -207,5 +212,40 @@ func TestBuildClusterClientEndpoints_PrefersOverrideWhenEndpointFingerprintPrese
 	}
 	if fingerprints["https://10.15.2.11:8006"] != "node1-fp" {
 		t.Fatalf("expected fingerprint to follow effective endpoint URL, got %q", fingerprints["https://10.15.2.11:8006"])
+	}
+}
+
+func TestBuildClusterClientEndpoints_FallsBackToMainHostWhenOnlyBaseFingerprintExists(t *testing.T) {
+	pve := config.PVEInstance{
+		Name:        "cluster-a",
+		Host:        "https://cluster-a.example.com:8006",
+		Fingerprint: "cluster-base-fp",
+		VerifySSL:   true,
+		IsCluster:   true,
+		ClusterName: "cluster-a",
+		ClusterEndpoints: []config.ClusterEndpoint{
+			{
+				NodeName: "node1",
+				Host:     "node1",
+				IP:       "10.15.5.11",
+			},
+			{
+				NodeName: "node2",
+				Host:     "node2",
+				IP:       "10.15.5.12",
+			},
+		},
+	}
+
+	endpoints, fingerprints := buildClusterClientEndpoints(pve)
+
+	if len(endpoints) != 1 {
+		t.Fatalf("expected only the main host fallback endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0] != "https://cluster-a.example.com:8006" {
+		t.Fatalf("expected main host fallback, got %q", endpoints[0])
+	}
+	if len(fingerprints) != 0 {
+		t.Fatalf("expected no per-endpoint fingerprints, got %v", fingerprints)
 	}
 }
