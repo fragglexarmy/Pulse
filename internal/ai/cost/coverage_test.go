@@ -49,17 +49,17 @@ func TestNormalizeModelForProvider(t *testing.T) {
 }
 
 func TestLookupPriceAndPatterns(t *testing.T) {
-	if _, ok := lookupPrice("", "gpt-4o"); ok {
+	if _, ok := lookupPrice("", "gpt-4o", 0); ok {
 		t.Fatal("expected empty provider to be unknown")
 	}
-	if _, ok := lookupPrice("openai", ""); ok {
+	if _, ok := lookupPrice("openai", "", 0); ok {
 		t.Fatal("expected empty model to be unknown")
 	}
-	if _, ok := lookupPrice("unknown", "model"); ok {
+	if _, ok := lookupPrice("unknown", "model", 0); ok {
 		t.Fatal("expected unknown provider to be unknown")
 	}
 
-	price, ok := lookupPrice("openai", "gpt-4o-mini")
+	price, ok := lookupPrice("openai", "gpt-4o-mini", 0)
 	if !ok || price.InputUSDPerMTok == 0 {
 		t.Fatalf("expected openai pricing match, got ok=%v price=%+v", ok, price)
 	}
@@ -75,6 +75,32 @@ func TestLookupPriceAndPatterns(t *testing.T) {
 	}
 	if !matchPattern("gpt-4o", "gpt-4o") {
 		t.Fatal("expected exact match to succeed")
+	}
+}
+
+func TestLookupPrice_UsesTieredGeminiPricing(t *testing.T) {
+	under200k, ok := lookupPrice("gemini", "gemini-2.5-pro", 150_000)
+	if !ok {
+		t.Fatal("expected Gemini 2.5 Pro pricing to resolve")
+	}
+	if under200k.InputUSDPerMTok != 1.25 || under200k.OutputUSDPerMTok != 10.00 {
+		t.Fatalf("unexpected <=200k tier: %+v", under200k)
+	}
+
+	over200k, ok := lookupPrice("gemini", "gemini-2.5-pro", 250_000)
+	if !ok {
+		t.Fatal("expected Gemini 2.5 Pro high-tier pricing to resolve")
+	}
+	if over200k.InputUSDPerMTok != 2.50 || over200k.OutputUSDPerMTok != 15.00 {
+		t.Fatalf("unexpected >200k tier: %+v", over200k)
+	}
+
+	flash, ok := lookupPrice("gemini", "gemini-3-flash-preview", 50_000)
+	if !ok {
+		t.Fatal("expected Gemini 3 Flash Preview pricing to resolve")
+	}
+	if flash.InputUSDPerMTok != 0.50 || flash.OutputUSDPerMTok != 3.00 {
+		t.Fatalf("unexpected Gemini 3 Flash Preview pricing: %+v", flash)
 	}
 }
 
