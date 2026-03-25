@@ -1205,3 +1205,154 @@ func TestAISettingsHandler_ChatSessions(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, rec.Code)
 	})
 }
+
+func TestShouldRestartAIChat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  AISettingsUpdateRequest
+		want bool
+	}{
+		{
+			name: "patrol model change restarts chat",
+			req:  AISettingsUpdateRequest{PatrolModel: ptr("openai:gpt-4o-mini")},
+			want: true,
+		},
+		{
+			name: "openai base url change restarts chat",
+			req:  AISettingsUpdateRequest{OpenAIBaseURL: ptr("http://localhost:11011")},
+			want: true,
+		},
+		{
+			name: "provider credential change restarts chat",
+			req:  AISettingsUpdateRequest{OpenAIAPIKey: ptr("test-key")},
+			want: true,
+		},
+		{
+			name: "credential clear restarts chat",
+			req:  AISettingsUpdateRequest{ClearOpenAIKey: ptr(true)},
+			want: true,
+		},
+		{
+			name: "patrol interval does not restart chat",
+			req:  AISettingsUpdateRequest{PatrolIntervalMinutes: ptr(60)},
+			want: false,
+		},
+		{
+			name: "alert analysis toggle does not restart chat",
+			req:  AISettingsUpdateRequest{AlertTriggeredAnalysis: ptr(true)},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldRestartAIChat(tt.req); got != tt.want {
+				t.Fatalf("shouldRestartAIChat() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAISettingsHandler_UpdateSettingsTriggersChatRestartForPatrolModel(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfg := &config.Config{DataPath: tmp}
+	persistence := config.NewConfigPersistence(tmp)
+
+	initial := config.NewDefaultAIConfig()
+	initial.Enabled = true
+	initial.Model = "ollama:llama3"
+	initial.ChatModel = "ollama:llama3"
+	initial.PatrolModel = "ollama:llama3"
+	initial.OllamaBaseURL = "http://localhost:11434"
+	require.NoError(t, persistence.SaveAIConfig(*initial))
+
+	handler := newTestAISettingsHandler(cfg, persistence, nil)
+
+	restarts := 0
+	handler.SetOnModelChange(func() {
+		restarts++
+	})
+
+	body, _ := json.Marshal(AISettingsUpdateRequest{
+		PatrolModel: ptr("ollama:phi4"),
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/ai", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.HandleUpdateAISettings(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, restarts, "expected patrol model change to restart chat service")
+}
+
+func TestAISettingsHandler_UpdateSettingsTriggersChatRestartForProviderEndpoint(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfg := &config.Config{DataPath: tmp}
+	persistence := config.NewConfigPersistence(tmp)
+
+	initial := config.NewDefaultAIConfig()
+	initial.Enabled = true
+	initial.Model = "openai:qwen3-omni"
+	initial.ChatModel = "openai:qwen3-omni"
+	initial.OpenAIAPIKey = "key-1"
+	initial.OpenAIBaseURL = "http://localhost:11011"
+	require.NoError(t, persistence.SaveAIConfig(*initial))
+
+	handler := newTestAISettingsHandler(cfg, persistence, nil)
+
+	restarts := 0
+	handler.SetOnModelChange(func() {
+		restarts++
+	})
+
+	body, _ := json.Marshal(AISettingsUpdateRequest{
+		OpenAIBaseURL: ptr("http://localhost:22022"),
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/ai", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.HandleUpdateAISettings(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, restarts, "expected provider endpoint change to restart chat service")
+}
+
+func TestAISettingsHandler_UpdateSettingsDoesNotTriggerChatRestartForPatrolSchedule(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfg := &config.Config{DataPath: tmp}
+	persistence := config.NewConfigPersistence(tmp)
+
+	initial := config.NewDefaultAIConfig()
+	initial.Enabled = true
+	initial.Model = "ollama:llama3"
+	initial.ChatModel = "ollama:llama3"
+	initial.PatrolModel = "ollama:llama3"
+	initial.OllamaBaseURL = "http://localhost:11434"
+	require.NoError(t, persistence.SaveAIConfig(*initial))
+
+	handler := newTestAISettingsHandler(cfg, persistence, nil)
+
+	restarts := 0
+	handler.SetOnModelChange(func() {
+		restarts++
+	})
+
+	body, _ := json.Marshal(AISettingsUpdateRequest{
+		PatrolIntervalMinutes: ptr(120),
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/ai", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.HandleUpdateAISettings(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 0, restarts, "expected patrol schedule change to avoid chat restart")
+}

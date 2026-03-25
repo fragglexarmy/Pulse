@@ -724,6 +724,29 @@ func (h *AISettingsHandler) SetOnModelChange(callback func()) {
 	h.onModelChange = callback
 }
 
+func shouldRestartAIChat(req AISettingsUpdateRequest) bool {
+	return req.Enabled != nil ||
+		req.Provider != nil ||
+		req.APIKey != nil ||
+		req.Model != nil ||
+		req.ChatModel != nil ||
+		req.PatrolModel != nil ||
+		req.AutoFixModel != nil ||
+		req.BaseURL != nil ||
+		req.AuthMethod != nil ||
+		req.AnthropicAPIKey != nil ||
+		req.OpenAIAPIKey != nil ||
+		req.DeepSeekAPIKey != nil ||
+		req.GeminiAPIKey != nil ||
+		req.OllamaBaseURL != nil ||
+		req.OpenAIBaseURL != nil ||
+		req.ClearAnthropicKey != nil ||
+		req.ClearOpenAIKey != nil ||
+		req.ClearDeepSeekKey != nil ||
+		req.ClearGeminiKey != nil ||
+		req.ClearOllamaURL != nil
+}
+
 // SetOnControlSettingsChange sets a callback to be invoked when control settings change
 // Used by Router to update MCP tool visibility without restarting AI chat
 func (h *AISettingsHandler) SetOnControlSettingsChange(callback func()) {
@@ -1485,7 +1508,7 @@ func (h *AISettingsHandler) HandleUpdateAISettings(w http.ResponseWriter, r *htt
 	// This ensures the new model is picked up by the service
 	// Trigger AI chat service restart if model changed or AI enabled
 	// This ensures the new model is picked up by the service
-	if h.onModelChange != nil && (req.Model != nil || req.ChatModel != nil || req.Enabled != nil) {
+	if h.onModelChange != nil && shouldRestartAIChat(req) {
 		h.onModelChange()
 	}
 
