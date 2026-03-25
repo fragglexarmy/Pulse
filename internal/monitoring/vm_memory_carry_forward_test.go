@@ -132,6 +132,29 @@ func TestShouldCarryForwardPreviousVMMemory_WhenTrustedGuestAgentMeminfoDropsToS
 	}
 }
 
+func TestShouldCarryForwardPreviousVMMemory_WhenTrustedGuestAgentMeminfoDropsToMemInfoTotalMinusUsed(t *testing.T) {
+	const total = uint64(16 << 30)
+	const trustedUsed = uint64(4 << 30)
+	const fallbackUsed = uint64(15 << 30)
+
+	prev := models.VM{
+		Type:         "qemu",
+		Status:       "running",
+		MemorySource: "guest-agent-meminfo",
+		Memory: models.Memory{
+			Total: int64(total),
+			Used:  int64(trustedUsed),
+			Free:  int64(total - trustedUsed),
+			Usage: safePercentage(float64(trustedUsed), float64(total)),
+		},
+		LastSeen: time.Now(),
+	}
+
+	if !shouldCarryForwardPreviousVMMemory(prev, "running", "meminfo-total-minus-used", total, fallbackUsed, time.Now()) {
+		t.Fatal("expected guest-agent meminfo reading to be preserved for one cycle when VM falls back to meminfo-total-minus-used")
+	}
+}
+
 func TestShouldCarryForwardPreviousVMMemory(t *testing.T) {
 	now := time.Now()
 	const total = uint64(16 << 30)
@@ -213,6 +236,15 @@ func TestShouldCarryForwardPreviousVMMemory(t *testing.T) {
 			currentTotal:  total,
 			currentUsed:   4476033511, // ~26.05% vs previous 25%, below the 5-point threshold
 			want:          false,
+		},
+		{
+			name:          "preserves trusted previous reading when current source is meminfo total-minus-used",
+			prev:          makePrevVM("rrd-memavailable", 4<<30, now),
+			currentStatus: "running",
+			currentSource: "meminfo-total-minus-used",
+			currentTotal:  total,
+			currentUsed:   15 << 30,
+			want:          true,
 		},
 	}
 

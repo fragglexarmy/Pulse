@@ -19,9 +19,9 @@ const (
 func vmMemorySourceReliability(source string) int {
 	switch strings.TrimSpace(source) {
 	case "meminfo-available", "meminfo-derived", "guest-agent-meminfo",
-		"rrd-memavailable", "rrd-memused", "host-agent", "meminfo-total-minus-used":
+		"rrd-memavailable", "rrd-memused", "host-agent":
 		return vmMemorySourceReliabilityTrusted
-	case "previous-snapshot":
+	case "meminfo-total-minus-used", "previous-snapshot":
 		return vmMemorySourceReliabilityFallback
 	case "", "cluster-resources", "listing-mem", "status-mem", "status-freemem", "status-unavailable":
 		return vmMemorySourceReliabilityLow
