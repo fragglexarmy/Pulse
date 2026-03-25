@@ -746,38 +746,55 @@ func (s *Service) createProviderForModel(modelStr string) (providers.StreamingPr
 	// - OpenRouter models with suffixes (e.g. "google/gemini-2.0-flash:free")
 	// - Bare model names (e.g. "claude-3-opus")
 	providerName, modelName := config.ParseModelString(modelStr)
+	explicitOllamaModel := strings.HasPrefix(modelStr, "ollama:")
+
+	// For bare/unrecognized model IDs (for example OpenAI-compatible endpoints
+	// exposing models like "qwen3-omni"), prefer the explicitly selected provider
+	// instead of assuming Ollama. Explicit "ollama:" prefixes still win.
+	if providerName == config.AIProviderOllama && !explicitOllamaModel {
+		preferredProvider := strings.ToLower(strings.TrimSpace(s.cfg.Provider))
+		if preferredProvider != "" &&
+			preferredProvider != config.AIProviderOllama &&
+			s.cfg.HasProvider(preferredProvider) {
+			providerName = preferredProvider
+		} else if configured := s.cfg.GetConfiguredProviders(); len(configured) == 1 && configured[0] != config.AIProviderOllama {
+			providerName = configured[0]
+		}
+	}
 
 	timeout := 5 * time.Minute
 
 	switch providerName {
 	case "anthropic":
-		if s.cfg.AnthropicAPIKey == "" {
+		apiKey := s.cfg.GetAPIKeyForProvider(config.AIProviderAnthropic)
+		if apiKey == "" {
 			return nil, fmt.Errorf("Anthropic API key not configured")
 		}
-		return providers.NewAnthropicClient(s.cfg.AnthropicAPIKey, modelName, timeout), nil
+		return providers.NewAnthropicClient(apiKey, modelName, timeout), nil
 	case "openai":
-		if s.cfg.OpenAIAPIKey == "" {
+		apiKey := s.cfg.GetAPIKeyForProvider(config.AIProviderOpenAI)
+		if apiKey == "" {
 			return nil, fmt.Errorf("OpenAI API key not configured")
 		}
-		return providers.NewOpenAIClient(s.cfg.OpenAIAPIKey, modelName, s.cfg.OpenAIBaseURL, timeout), nil
+		baseURL := s.cfg.GetBaseURLForProvider(config.AIProviderOpenAI)
+		return providers.NewOpenAIClient(apiKey, modelName, baseURL, timeout), nil
 	case "deepseek":
-		if s.cfg.DeepSeekAPIKey == "" {
+		apiKey := s.cfg.GetAPIKeyForProvider(config.AIProviderDeepSeek)
+		if apiKey == "" {
 			return nil, fmt.Errorf("DeepSeek API key not configured")
 		}
-		return providers.NewOpenAIClient(s.cfg.DeepSeekAPIKey, modelName, "https://api.deepseek.com", timeout), nil
+		baseURL := s.cfg.GetBaseURLForProvider(config.AIProviderDeepSeek)
+		return providers.NewOpenAIClient(apiKey, modelName, baseURL, timeout), nil
 	case "gemini":
-		if s.cfg.GeminiAPIKey == "" {
+		apiKey := s.cfg.GetAPIKeyForProvider(config.AIProviderGemini)
+		if apiKey == "" {
 			return nil, fmt.Errorf("Gemini API key not configured")
 		}
-		return providers.NewGeminiClient(s.cfg.GeminiAPIKey, modelName, "", timeout), nil
+		baseURL := s.cfg.GetBaseURLForProvider(config.AIProviderGemini)
+		return providers.NewGeminiClient(apiKey, modelName, baseURL, timeout), nil
 	case "ollama":
-		baseURL := s.cfg.OllamaBaseURL
+		baseURL := s.cfg.GetBaseURLForProvider(config.AIProviderOllama)
 		if baseURL == "" {
-			// Only fall back for bare/unrecognized model names (no explicit "ollama:" prefix).
-			// An explicit "ollama:llama3" must not be silently rerouted to a different provider.
-			if !strings.HasPrefix(modelStr, "ollama:") && s.cfg.OpenAIAPIKey != "" && s.cfg.OpenAIBaseURL != "" {
-				return providers.NewOpenAIClient(s.cfg.OpenAIAPIKey, modelName, s.cfg.OpenAIBaseURL, timeout), nil
-			}
 			baseURL = "http://localhost:11434"
 		}
 		return providers.NewOllamaClient(modelName, baseURL, timeout), nil

@@ -98,6 +98,29 @@ func TestService_CreateProviderForModel(t *testing.T) {
 	if _, err := svc.createProviderForModel("deepseek:deepseek-chat"); err != nil {
 		t.Fatalf("expected deepseek provider: %v", err)
 	}
+
+	svc.cfg = &config.AIConfig{
+		Enabled:       true,
+		Provider:      config.AIProviderOpenAI,
+		APIKey:        "legacy-openai-key",
+		BaseURL:       "https://legacy-openai.example.com/v1",
+		OpenAIBaseURL: "https://legacy-openai.example.com/v1",
+		ChatModel:     "qwen3-omni",
+	}
+	if _, err := svc.createProviderForModel("qwen3-omni"); err != nil {
+		t.Fatalf("expected bare model to use configured legacy openai provider: %v", err)
+	}
+
+	svc.cfg = &config.AIConfig{
+		Enabled:       true,
+		Provider:      config.AIProviderOpenAI,
+		OpenAIAPIKey:  "modern-openai-key",
+		OpenAIBaseURL: "https://custom-openai.example.com/v1",
+		ChatModel:     "qwen3-omni",
+	}
+	if _, err := svc.createProviderForModel("qwen3-omni"); err != nil {
+		t.Fatalf("expected bare model to use selected openai-compatible provider: %v", err)
+	}
 }
 
 func TestService_ExecutePatrolStream_Success(t *testing.T) {
