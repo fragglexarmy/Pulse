@@ -9742,6 +9742,9 @@ func (m *Monitor) handleAlertResolved(alertID string) {
 				resolvedAlert = m.alertManager.GetResolvedAlert(alertID)
 			}
 			if resolvedAlert != nil {
+				if m.alertManager != nil && m.alertManager.ShouldSuppressResolvedNotification(resolvedAlert.Alert) {
+					return
+				}
 				go m.notificationMgr.SendResolvedAlert(resolvedAlert)
 			}
 		}

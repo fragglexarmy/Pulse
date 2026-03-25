@@ -66,7 +66,7 @@ func TestMonitor_HandleAlertResolved_Detailed_Extra(t *testing.T) {
 	m.handleAlertResolved("alert-id")
 }
 
-func TestHandleAlertResolved_QuietHoursDoesNotSuppressRecovery(t *testing.T) {
+func TestHandleAlertResolved_QuietHoursSuppressesRecovery(t *testing.T) {
 	received := make(chan []byte, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -150,6 +150,74 @@ func TestHandleAlertResolved_QuietHoursDoesNotSuppressRecovery(t *testing.T) {
 	case body := <-received:
 		var payload map[string]interface{}
 		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("failed to parse unexpected webhook payload: %v", err)
+		}
+		t.Fatalf("expected resolved notification to be suppressed during quiet hours, got payload %#v", payload)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestHandleAlertResolved_SendsRecoveryOutsideQuietHours(t *testing.T) {
+	received := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		body, _ := io.ReadAll(r.Body)
+		select {
+		case received <- body:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	notifMgr := notifications.NewNotificationManagerWithDataDir("http://pulse.example", t.TempDir())
+	if err := notifMgr.UpdateAllowedPrivateCIDRs("127.0.0.1/32,::1/128"); err != nil {
+		t.Fatalf("UpdateAllowedPrivateCIDRs: %v", err)
+	}
+	notifMgr.AddWebhook(notifications.WebhookConfig{
+		ID:      "test-webhook",
+		Name:    "test-webhook",
+		URL:     srv.URL,
+		Enabled: true,
+		Service: "generic",
+	})
+	notifMgr.SetNotifyOnResolve(true)
+
+	alertMgr := alerts.NewManager()
+	cfg := alertMgr.GetConfig()
+	cfg.Enabled = true
+	cfg.GuestDefaults.PoweredOffSeverity = alerts.AlertLevelWarning
+	cfg.Schedule.QuietHours.Enabled = false
+	alertMgr.UpdateConfig(cfg)
+
+	m := &Monitor{
+		alertManager:    alertMgr,
+		notificationMgr: notifMgr,
+	}
+	alertMgr.SetResolvedCallback(m.handleAlertResolved)
+
+	vm := models.VM{
+		ID:       "vm-2",
+		Name:     "test-vm-2",
+		Node:     "node-1",
+		Instance: "inst-1",
+		Status:   "stopped",
+		Memory:   models.Memory{Usage: 0},
+		Disk:     models.Disk{Usage: 0},
+	}
+
+	alertMgr.CheckGuest(vm, vm.Instance)
+	alertMgr.CheckGuest(vm, vm.Instance)
+
+	alertID := "guest-powered-off-" + vm.ID
+
+	vm.Status = "running"
+	alertMgr.CheckGuest(vm, vm.Instance)
+
+	select {
+	case body := <-received:
+		var payload map[string]interface{}
+		if err := json.Unmarshal(body, &payload); err != nil {
 			t.Fatalf("failed to parse webhook payload: %v", err)
 		}
 		if payload["event"] != "resolved" {
@@ -159,6 +227,6 @@ func TestHandleAlertResolved_QuietHoursDoesNotSuppressRecovery(t *testing.T) {
 			t.Fatalf("expected webhook alertId=%q, got %v", alertID, payload["alertId"])
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for resolved notification webhook (should not be suppressed by quiet hours)")
+		t.Fatalf("timed out waiting for resolved notification webhook")
 	}
 }
