@@ -1,0 +1,100 @@
+package monitoring
+
+import (
+	"strings"
+
+	"github.com/rcourtman/pulse-go-rewrite/internal/models"
+	"github.com/rcourtman/pulse-go-rewrite/pkg/proxmox"
+	"github.com/rs/zerolog/log"
+)
+
+func (m *Monitor) resolveNodeDisk(
+	instanceName string,
+	nodeID string,
+	nodeName string,
+	node proxmox.Node,
+	nodeInfo *proxmox.NodeStatus,
+) (models.Disk, string) {
+	if linkedHost := m.linkedHostForNode(nodeID, nodeName); linkedHost != nil {
+		if disk, ok := models.SummaryDisk(linkedHost.Disks); ok {
+			resolved := models.Disk{
+				Total: disk.Total,
+				Used:  disk.Used,
+				Free:  disk.Free,
+				Usage: disk.Usage,
+			}
+			log.Debug().
+				Str("instance", instanceName).
+				Str("node", nodeName).
+				Str("hostAgentID", linkedHost.ID).
+				Int64("total", resolved.Total).
+				Int64("used", resolved.Used).
+				Float64("usage", resolved.Usage).
+				Msg("Node disk: using linked Pulse host agent disk summary")
+			return resolved, "host-agent"
+		}
+	}
+
+	if nodeInfo != nil && nodeInfo.RootFS != nil && nodeInfo.RootFS.Total > 0 {
+		resolved := models.Disk{
+			Total: int64(nodeInfo.RootFS.Total),
+			Used:  int64(nodeInfo.RootFS.Used),
+			Free:  int64(nodeInfo.RootFS.Free),
+			Usage: safePercentage(float64(nodeInfo.RootFS.Used), float64(nodeInfo.RootFS.Total)),
+		}
+		log.Debug().
+			Str("instance", instanceName).
+			Str("node", nodeName).
+			Uint64("rootfsUsed", nodeInfo.RootFS.Used).
+			Uint64("rootfsTotal", nodeInfo.RootFS.Total).
+			Float64("rootfsUsage", resolved.Usage).
+			Msg("Node disk: using Proxmox rootfs metrics")
+		return resolved, "rootfs"
+	}
+
+	if node.MaxDisk > 0 {
+		resolved := models.Disk{
+			Total: int64(node.MaxDisk),
+			Used:  int64(node.Disk),
+			Free:  int64(node.MaxDisk - node.Disk),
+			Usage: safePercentage(float64(node.Disk), float64(node.MaxDisk)),
+		}
+		log.Debug().
+			Str("instance", instanceName).
+			Str("node", nodeName).
+			Uint64("disk", node.Disk).
+			Uint64("maxDisk", node.MaxDisk).
+			Float64("usage", resolved.Usage).
+			Msg("Node disk: using /nodes endpoint metrics")
+		return resolved, "nodes-endpoint"
+	}
+
+	return models.Disk{}, ""
+}
+
+func (m *Monitor) linkedHostForNode(nodeID, nodeName string) *models.Host {
+	state := m.GetState()
+	linkedHostID := ""
+	for _, existingNode := range state.Nodes {
+		if existingNode.ID == nodeID || strings.EqualFold(existingNode.Name, nodeName) {
+			linkedHostID = strings.TrimSpace(existingNode.LinkedHostAgentID)
+			break
+		}
+	}
+	if linkedHostID == "" {
+		return nil
+	}
+
+	for _, host := range state.Hosts {
+		if strings.TrimSpace(host.ID) != linkedHostID {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(host.Status), "online") {
+			return nil
+		}
+		resolved := host
+		return &resolved
+	}
+
+	return nil
+}
