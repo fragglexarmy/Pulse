@@ -3,6 +3,8 @@ package alerts
 import (
 	"testing"
 	"time"
+
+	"github.com/rcourtman/pulse-go-rewrite/internal/models"
 )
 
 // TestReevaluateActiveAlertsOnThresholdChange tests that active alerts are re-evaluated when thresholds change
@@ -214,6 +216,55 @@ func TestReevaluateActiveAlertsStillAboveThreshold(t *testing.T) {
 
 	if !alertStillActive {
 		t.Errorf("Expected alert to remain active since value (96%%) is still above new threshold (90%%)")
+	}
+}
+
+func TestReevaluateActiveStorageAlertsOnThresholdChange(t *testing.T) {
+	manager := NewManager()
+
+	manager.mu.Lock()
+	manager.activeAlerts = make(map[string]*Alert)
+	manager.mu.Unlock()
+
+	initialConfig := AlertConfig{
+		Enabled:        true,
+		StorageDefault: HysteresisThreshold{Trigger: 85, Clear: 80},
+		Overrides:      make(map[string]ThresholdConfig),
+	}
+	manager.UpdateConfig(initialConfig)
+	manager.mu.Lock()
+	manager.config.TimeThreshold = 0
+	manager.config.TimeThresholds = map[string]int{}
+	manager.mu.Unlock()
+
+	storage := models.Storage{
+		ID:       "Main-cluster-ceph-pool",
+		Name:     "ceph-pool",
+		Node:     "cluster",
+		Instance: "Main",
+		Status:   "available",
+		Usage:    90,
+	}
+	manager.CheckStorage(storage)
+
+	manager.mu.RLock()
+	_, existsBefore := manager.activeAlerts["Main-cluster-ceph-pool-usage"]
+	manager.mu.RUnlock()
+	if !existsBefore {
+		t.Fatalf("expected storage alert to exist before threshold update")
+	}
+
+	updatedConfig := initialConfig
+	updatedConfig.StorageDefault = HysteresisThreshold{Trigger: 95, Clear: 90}
+	manager.UpdateConfig(updatedConfig)
+
+	time.Sleep(100 * time.Millisecond)
+
+	manager.mu.RLock()
+	_, existsAfter := manager.activeAlerts["Main-cluster-ceph-pool-usage"]
+	manager.mu.RUnlock()
+	if existsAfter {
+		t.Errorf("expected storage alert to be resolved after threshold increase")
 	}
 }
 

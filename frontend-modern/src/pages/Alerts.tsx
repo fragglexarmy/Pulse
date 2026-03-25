@@ -22,7 +22,7 @@ import { NotificationsAPI, Webhook } from '@/api/notifications';
 import { LicenseAPI, type LicenseFeatureStatus } from '@/api/license';
 import type { EmailConfig, AppriseConfig } from '@/api/notifications';
 import type { HysteresisThreshold } from '@/types/alerts';
-import type { Alert, Incident, IncidentEvent, State, VM, Container, DockerHost, DockerContainer, Host } from '@/types/api';
+import type { Alert, Incident, IncidentEvent, State, VM, Container, DockerHost, DockerContainer, Host, Storage } from '@/types/api';
 import { useNavigate, useLocation } from '@solidjs/router';
 import { useAlertsActivation } from '@/stores/alertsActivation';
 import { logger } from '@/utils/logger';
@@ -483,6 +483,51 @@ export const extractTriggerValues = (
   return result;
 };
 
+export const normalizeRawOverrideConfigKeys = (
+  rawOverrides: Record<string, RawOverrideConfig>,
+  storage: Storage[] = [],
+): Record<string, RawOverrideConfig> => {
+  const normalized: Record<string, RawOverrideConfig> = {};
+  const sharedStorageLegacyKeyMap = new Map<string, string>();
+
+  storage.forEach((entry) => {
+    if (!entry.shared || !entry.id || !entry.name) {
+      return;
+    }
+
+    (entry.nodeIds ?? []).forEach((nodeId) => {
+      const trimmedNodeID = nodeId.trim();
+      if (!trimmedNodeID) {
+        return;
+      }
+      sharedStorageLegacyKeyMap.set(`${trimmedNodeID}-${entry.name}`, entry.id);
+    });
+  });
+
+  for (const [rawKey, value] of Object.entries(rawOverrides || {})) {
+    let key = rawKey;
+
+    const diskMatch = key.match(/^(host:.+\/disk:)(.+)$/);
+    if (diskMatch) {
+      const normalizedDisk = diskMatch[2]
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-{2,}/g, '-')
+        .replace(/^-|-$/g, '') || 'unknown';
+      key = diskMatch[1] + normalizedDisk;
+    }
+
+    const sharedStorageKey = sharedStorageLegacyKeyMap.get(key);
+    if (sharedStorageKey) {
+      key = sharedStorageKey;
+    }
+
+    normalized[key] = value;
+  }
+
+  return normalized;
+};
+
 const DEFAULT_DELAY_SECONDS = 5;
 
 export function Alerts() {
@@ -641,6 +686,14 @@ export function Alerts() {
   const [rawOverridesConfig, setRawOverridesConfig] = createSignal<
     Record<string, RawOverrideConfig>
   >({}); // Store raw config
+
+  createEffect(() => {
+    const currentRawOverrides = rawOverridesConfig();
+    const normalized = normalizeRawOverrideConfigKeys(currentRawOverrides, state.storage || []);
+    if (JSON.stringify(normalized) !== JSON.stringify(currentRawOverrides)) {
+      setRawOverridesConfig(normalized);
+    }
+  });
 
   // Email configuration state moved to parent to persist across tab changes
   const [emailConfig, setEmailConfig] = createSignal<UIEmailConfig>({
@@ -1251,21 +1304,7 @@ export function Alerts() {
       setDisableAllPMGOffline(config.disableAllPMGOffline ?? false);
       setDisableAllDockerHostsOffline(config.disableAllDockerHostsOffline ?? false);
 
-      // Clean up any host disk override keys that used old underscore sanitization.
-      // The old frontend incorrectly used '_' but the backend uses '-', so old keys
-      // were never functional for alert evaluation. Drop them silently on load.
-      const rawOverrides = config.overrides || {};
-      const cleanedOverrides: typeof rawOverrides = {};
-      for (const [key, value] of Object.entries(rawOverrides)) {
-        const diskMatch = key.match(/^(host:.+\/disk:)(.+)$/);
-        if (diskMatch) {
-          const normalized = diskMatch[2].toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '') || 'unknown';
-          cleanedOverrides[diskMatch[1] + normalized] = value;
-        } else {
-          cleanedOverrides[key] = value;
-        }
-      }
-      setRawOverridesConfig(cleanedOverrides);
+      setRawOverridesConfig(normalizeRawOverrideConfigKeys(config.overrides || {}, state.storage || []));
 
       if (config.schedule) {
         if (config.schedule.quietHours) {

@@ -15764,6 +15764,42 @@ func TestCheckStorageComprehensive(t *testing.T) {
 		}
 	})
 
+	t.Run("applies legacy shared storage override threshold", func(t *testing.T) {
+		m := newTestManager(t)
+
+		m.mu.Lock()
+		m.config.TimeThreshold = 0
+		m.config.TimeThresholds = map[string]int{}
+		m.config.StorageDefault = HysteresisThreshold{Trigger: 80.0, Clear: 70.0}
+		overrideThreshold := HysteresisThreshold{Trigger: 10.0, Clear: 5.0}
+		m.config.Overrides = map[string]ThresholdConfig{
+			"Main-pve1-ceph-pool": {Usage: &overrideThreshold},
+		}
+		m.mu.Unlock()
+
+		storage := models.Storage{
+			ID:       "Main-cluster-ceph-pool",
+			Name:     "ceph-pool",
+			Node:     "cluster",
+			Instance: "Main",
+			Status:   "available",
+			Usage:    20.0,
+			Shared:   true,
+			Nodes:    []string{"pve1", "pve2"},
+			NodeIDs:  []string{"Main-pve1", "Main-pve2"},
+		}
+
+		m.CheckStorage(storage)
+
+		m.mu.RLock()
+		alert := m.activeAlerts["Main-cluster-ceph-pool-usage"]
+		m.mu.RUnlock()
+
+		if alert == nil {
+			t.Fatal("expected usage alert when legacy shared-storage override matches canonical storage ID")
+		}
+	})
+
 	t.Run("skips usage check when offline", func(t *testing.T) {
 		// t.Parallel()
 		m := newTestManager(t)

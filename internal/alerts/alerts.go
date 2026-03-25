@@ -1834,7 +1834,7 @@ func (m *Manager) reevaluateActiveAlertsLocked() {
 				thresholds = m.applyThresholdOverride(thresholds, override)
 			}
 			threshold = getThresholdForMetric(thresholds, metricType)
-		} else if threshold == nil && (alert.Instance == "Storage" || strings.Contains(alert.ResourceID, ":storage/")) {
+		} else if threshold == nil && (resourceTypeMeta == "storage" || alert.Instance == "Storage" || strings.Contains(alert.ResourceID, ":storage/")) {
 			// This is a storage alert
 			// Check if all storage alerts are disabled
 			if m.config.DisableAllStorage {
@@ -5124,8 +5124,10 @@ func (m *Manager) CheckStorage(storage models.Storage) {
 		return
 	}
 
-	// Check if there's an override for this storage device
-	override, hasOverride := m.config.Overrides[storage.ID]
+	// Check if there's an override for this storage device. Shared storage used
+	// to be keyed per reporting node before #1049 switched it to a stable
+	// cluster-wide ID, so we still honor legacy per-node override keys.
+	override, hasOverride, _ := findStorageOverride(m.config.Overrides, storage)
 	threshold := m.config.StorageDefault
 
 	// Apply override if it exists for usage threshold
@@ -5202,6 +5204,68 @@ func BuildGuestKey(instance, node string, vmid int) string {
 		instance = node
 	}
 	return fmt.Sprintf("%s:%s:%d", instance, node, vmid)
+}
+
+func storageOverrideLookupKeys(storage models.Storage) []string {
+	keys := make([]string, 0, 1+len(storage.NodeIDs)+len(storage.Nodes))
+	seen := make(map[string]struct{})
+
+	addKey := func(key string) {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+
+	addKey(storage.ID)
+
+	if !storage.Shared {
+		return keys
+	}
+
+	name := strings.TrimSpace(storage.Name)
+	if name == "" {
+		return keys
+	}
+
+	for _, nodeID := range storage.NodeIDs {
+		nodeID = strings.TrimSpace(nodeID)
+		if nodeID == "" {
+			continue
+		}
+		addKey(fmt.Sprintf("%s-%s", nodeID, name))
+	}
+
+	instance := strings.TrimSpace(storage.Instance)
+	for _, node := range storage.Nodes {
+		node = strings.TrimSpace(node)
+		if node == "" || strings.EqualFold(node, "cluster") {
+			continue
+		}
+
+		prefix := node
+		if instance != "" && instance != node {
+			prefix = fmt.Sprintf("%s-%s", instance, node)
+		}
+		addKey(fmt.Sprintf("%s-%s", prefix, name))
+	}
+
+	return keys
+}
+
+func findStorageOverride(overrides map[string]ThresholdConfig, storage models.Storage) (ThresholdConfig, bool, string) {
+	for _, key := range storageOverrideLookupKeys(storage) {
+		override, exists := overrides[key]
+		if exists {
+			return override, true, key
+		}
+	}
+	return ThresholdConfig{}, false, ""
 }
 
 // CheckSnapshotsForInstance evaluates guest snapshots for age-based alerts.
@@ -8553,7 +8617,7 @@ func (m *Manager) checkStorageOffline(storage models.Storage) {
 	defer m.mu.Unlock()
 
 	// Check if storage offline alerts are disabled
-	if override, exists := m.config.Overrides[storage.ID]; exists && override.Disabled {
+	if override, exists, _ := findStorageOverride(m.config.Overrides, storage); exists && override.Disabled {
 		// Storage alerts are disabled, clear any existing alert and return
 		if _, alertExists := m.activeAlerts[alertID]; alertExists {
 			m.clearAlertNoLock(alertID)

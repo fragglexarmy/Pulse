@@ -12,11 +12,13 @@ import {
   fallbackMaxAlertsPerHour,
   extractTriggerValues,
   getTriggerValue,
+  normalizeRawOverrideConfigKeys,
   normalizeMetricDelayMap,
   pathForTab,
   tabFromPath,
 } from '../Alerts';
 import type { RawOverrideConfig } from '@/types/alerts';
+import type { Storage } from '@/types/api';
 
 describe('normalizeMetricDelayMap', () => {
   it('returns empty object when input is nullish', () => {
@@ -192,5 +194,37 @@ describe('threshold helper utilities', () => {
     expect(getTriggerValue({ trigger: 90, clear: 80 })).toBe(90);
     expect(getTriggerValue(true)).toBe(0);
     expect(getTriggerValue(undefined)).toBe(0);
+  });
+
+  it('migrates legacy shared storage override keys to the canonical cluster storage id', () => {
+    const storage: Storage[] = [{
+      id: 'Main-cluster-ceph-pool',
+      name: 'ceph-pool',
+      node: 'cluster',
+      instance: 'Main',
+      type: 'rbd',
+      status: 'available',
+      total: 100,
+      used: 20,
+      free: 80,
+      usage: 20,
+      content: 'images',
+      shared: true,
+      enabled: true,
+      active: true,
+      nodes: ['pve1', 'pve2'],
+      nodeIds: ['Main-pve1', 'Main-pve2'],
+      nodeCount: 2,
+    }];
+
+    expect(normalizeRawOverrideConfigKeys({
+      'Main-pve1-ceph-pool': {
+        usage: { trigger: 2, clear: 0 },
+      },
+    }, storage)).toEqual({
+      'Main-cluster-ceph-pool': {
+        usage: { trigger: 2, clear: 0 },
+      },
+    });
   });
 });
