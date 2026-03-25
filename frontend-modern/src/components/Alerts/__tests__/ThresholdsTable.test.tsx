@@ -120,6 +120,8 @@ const baseProps = () => ({
   setDockerDisableConnectivity: vi.fn(),
   dockerPoweredOffSeverity: () => 'warning' as const,
   setDockerPoweredOffSeverity: vi.fn(),
+  containerUpdateAlertsEnabled: () => false,
+  setContainerUpdateAlertsEnabled: vi.fn(),
   setDockerDefaults: vi.fn(),
   storageDefault: () => 85,
   setStorageDefault: vi.fn(),
