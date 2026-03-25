@@ -48,6 +48,18 @@ describe('tagColors', () => {
             expect(colorA.bg).not.toBe(colorB.bg);
         });
 
+        it('prefers proxmox-supplied colors over fallback palettes', () => {
+            const color = getTagColorWithSpecial('Production', false, {
+                production: '#112233',
+            });
+
+            expect(color).toEqual({
+                bg: '#112233',
+                text: '#ffffff',
+                border: '#112233',
+            });
+        });
+
         it('generates dark mode hash-based colors', () => {
             const color = getTagColorWithSpecial('custom', true);
 

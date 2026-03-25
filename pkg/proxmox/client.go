@@ -1821,13 +1821,40 @@ func ParseTagColorMap(tagStyle string) map[string]string {
 			continue
 		}
 		for _, pair := range strings.Split(strings.TrimPrefix(part, "color-map="), ";") {
-			kv := strings.SplitN(pair, ":", 2)
-			if len(kv) == 2 && len(kv[1]) == 6 {
-				colors[strings.ToLower(strings.TrimSpace(kv[0]))] = "#" + kv[1]
+			fields := strings.Split(pair, ":")
+			if len(fields) < 2 {
+				continue
 			}
+			tag := strings.ToLower(strings.TrimSpace(fields[0]))
+			hex := strings.TrimSpace(fields[1])
+			hex = strings.TrimPrefix(hex, "#")
+			if tag == "" || !isHexColorToken(hex) {
+				continue
+			}
+			colors[tag] = "#" + strings.ToLower(hex)
 		}
 	}
 	return colors
+}
+
+func isHexColorToken(value string) bool {
+	switch len(value) {
+	case 3, 6, 8:
+	default:
+		return false
+	}
+
+	for _, r := range value {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 // ZFSPoolStatus represents the status of a ZFS pool (list endpoint)
