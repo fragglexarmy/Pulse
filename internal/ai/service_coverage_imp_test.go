@@ -2,6 +2,9 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -23,8 +26,8 @@ func TestService_QuickAnalysis(t *testing.T) {
 	// Case 2: Configured
 	mockProv := &mockProvider{
 		chatFunc: func(ctx context.Context, req providers.ChatRequest) (*providers.ChatResponse, error) {
-			if req.Model != "fast-model" {
-				return nil, nil // Should use patrol model
+			if req.Model != "" {
+				t.Fatalf("expected default-provider fallback with empty model override, got %q", req.Model)
 			}
 			return &providers.ChatResponse{
 				Content: "Analysis Result",
@@ -33,8 +36,7 @@ func TestService_QuickAnalysis(t *testing.T) {
 	}
 	svc.provider = mockProv
 	svc.cfg = &config.AIConfig{
-		Enabled:     true,
-		PatrolModel: "fast-model",
+		Enabled: true,
 	}
 
 	res, err := svc.QuickAnalysis(context.Background(), "Analysis prompt")
@@ -52,6 +54,71 @@ func TestService_QuickAnalysis(t *testing.T) {
 	_, err = svc.QuickAnalysis(context.Background(), "test")
 	if err == nil {
 		t.Error("Expected error for empty response")
+	}
+}
+
+func TestService_QuickAnalysis_UsesPatrolModelProviderInsteadOfDefaultProvider(t *testing.T) {
+	t.Parallel()
+
+	openAI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got, _ := req["model"].(string); got != "gpt-4o-mini" {
+			t.Fatalf("model = %q, want gpt-4o-mini", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":      "chatcmpl-test",
+			"object":  "chat.completion",
+			"created": 1,
+			"model":   "gpt-4o-mini",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": "analysis from patrol model",
+					},
+					"finish_reason": "stop",
+				},
+			},
+			"usage": map[string]interface{}{
+				"prompt_tokens":     11,
+				"completion_tokens": 7,
+				"total_tokens":      18,
+			},
+		})
+	}))
+	defer openAI.Close()
+
+	svc := NewService(nil, nil)
+	svc.provider = &mockProvider{
+		chatFunc: func(ctx context.Context, req providers.ChatRequest) (*providers.ChatResponse, error) {
+			t.Fatal("expected QuickAnalysis to avoid the stale default provider")
+			return nil, nil
+		},
+	}
+	svc.cfg = &config.AIConfig{
+		Enabled:       true,
+		Model:         "gemini:gemini-2.5-pro",
+		PatrolModel:   "openai:gpt-4o-mini",
+		OpenAIAPIKey:  "test-key",
+		OpenAIBaseURL: openAI.URL,
+	}
+
+	res, err := svc.QuickAnalysis(context.Background(), "Analysis prompt")
+	if err != nil {
+		t.Fatalf("QuickAnalysis failed: %v", err)
+	}
+	if res != "analysis from patrol model" {
+		t.Fatalf("unexpected result: %s", res)
 	}
 }
 

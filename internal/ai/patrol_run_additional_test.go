@@ -44,7 +44,7 @@ func TestPatrolService_AskAIAboutAlert(t *testing.T) {
 	ps := NewPatrolService(nil, nil)
 	aiSvc := &Service{
 		provider: mockPatrolProvider{response: "RESOLVE: looks good"},
-		cfg:      &config.AIConfig{PatrolModel: "mock:model"},
+		cfg:      &config.AIConfig{Enabled: true},
 	}
 
 	alert := AlertInfo{
