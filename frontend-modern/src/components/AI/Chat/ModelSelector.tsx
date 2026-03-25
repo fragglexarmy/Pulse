@@ -1,5 +1,5 @@
 import { Component, For, Show, createSignal, createMemo, onMount, onCleanup } from 'solid-js';
-import { PROVIDER_DISPLAY_NAMES, getProviderFromModelId, groupModelsByProvider } from '../aiChatUtils';
+import { PROVIDER_DISPLAY_NAMES, getProviderForModel, groupModelsByProvider } from '../aiChatUtils';
 import type { ModelInfo } from './types';
 
 export interface ModelSelectorProps {
@@ -46,7 +46,7 @@ export const ModelSelector: Component<ModelSelectorProps> = (props) => {
         if (!query) return notableFilteredModels();
         const baseModels = props.models;
         return baseModels.filter((model) => {
-            const provider = getProviderFromModelId(model.id);
+            const provider = getProviderForModel(model);
             const providerName = PROVIDER_DISPLAY_NAMES[provider] || provider;
             const modelName = model.name || '';
             return (

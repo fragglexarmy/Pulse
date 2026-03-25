@@ -1,3 +1,5 @@
+import type { AIProvider } from '@/types/ai';
+
 // Chat component types
 
 export interface ToolExecution {
@@ -78,6 +80,7 @@ export interface ModelInfo {
   name: string;
   description?: string;
   notable?: boolean;
+  provider?: AIProvider;
 }
 
 // Stream event types from backend

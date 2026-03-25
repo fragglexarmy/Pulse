@@ -3850,6 +3850,7 @@ func (s *Service) ListModelsWithCache(ctx context.Context) ([]providers.ModelInf
 				Description: providerDisplayName(providerName) + ": " + m.ID,
 				CreatedAt:   m.CreatedAt,
 				Notable:     m.Notable,
+				Provider:    providerName,
 			})
 		}
 

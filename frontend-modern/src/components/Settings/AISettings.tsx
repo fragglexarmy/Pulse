@@ -11,19 +11,11 @@ import { logger } from '@/utils/logger';
 import { AIAPI } from '@/api/ai';
 import { AIChatAPI, type ChatSession, type FileChange } from '@/api/aiChat';
 import { hasFeature, loadLicenseStatus } from '@/stores/license';
-import type { AISettings as AISettingsType, AIProvider, AuthMethod } from '@/types/ai';
+import type { AISettings as AISettingsType, AIProvider, AuthMethod, ModelInfo } from '@/types/ai';
 import { normalizeChatSessions } from '@/components/Settings/aiSettingsChatSessions';
+import { PROVIDER_DISPLAY_NAMES, getProviderFromModelId, groupModelsByProvider } from '@/utils/aiModels';
 
 // Providers are now configured via accordion sections, not a single-provider selector
-
-// Provider display names for optgroup labels
-const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  deepseek: 'DeepSeek',
-  gemini: 'Google Gemini',
-  ollama: 'Ollama',
-};
 
 type ControlLevel = 'read_only' | 'controlled' | 'autonomous';
 
@@ -36,43 +28,6 @@ const normalizeControlLevel = (value?: string): ControlLevel => {
   }
   return 'read_only';
 };
-
-// Known provider prefixes — only these are treated as explicit "provider:model" delimiters.
-// This avoids misinterpreting colons in model names like "llama3.2:latest" or "model:free".
-const KNOWN_PROVIDERS = ['anthropic', 'openai', 'deepseek', 'gemini', 'ollama'];
-
-// Parse provider from model ID (format: "provider:model-name")
-function getProviderFromModelId(modelId: string): string {
-  // Check for explicit known provider prefix (e.g. "openai:gpt-4o")
-  const colonIndex = modelId.indexOf(':');
-  if (colonIndex > 0) {
-    const prefix = modelId.substring(0, colonIndex);
-    if (KNOWN_PROVIDERS.includes(prefix)) {
-      return prefix;
-    }
-  }
-  // Vendor-prefixed names like "google/gemini-*" or "meta-llama/llama-*" are
-  // OpenRouter model IDs routed through the OpenAI-compatible provider.
-  if (modelId.includes('/')) {
-    return 'openai';
-  }
-  // Strip colon suffix for detection (e.g. "llama3.2:latest" → "llama3.2")
-  const name = colonIndex > 0 ? modelId.substring(0, colonIndex) : modelId;
-  // Default detection for models without prefix
-  if (name.startsWith('claude') || name.startsWith('opus') || name.startsWith('sonnet') || name.startsWith('haiku')) {
-    return 'anthropic';
-  }
-  if (name.startsWith('gpt') || name.startsWith('o1') || name.startsWith('o3') || name.startsWith('o4')) {
-    return 'openai';
-  }
-  if (name.startsWith('deepseek')) {
-    return 'deepseek';
-  }
-  if (name.startsWith('gemini')) {
-    return 'gemini';
-  }
-  return 'ollama';
-}
 
 // Check if a provider is configured based on settings
 function isProviderConfigured(provider: string, settings: AISettingsType | null): boolean {
@@ -93,20 +48,6 @@ function isModelProviderConfigured(modelId: string, settings: AISettingsType | n
   return isProviderConfigured(provider, settings);
 }
 
-// Group models by provider for optgroup rendering
-function groupModelsByProvider(models: { id: string; name: string; description?: string }[]): Map<string, { id: string; name: string; description?: string }[]> {
-  const grouped = new Map<string, { id: string; name: string; description?: string }[]>();
-
-  for (const model of models) {
-    const provider = getProviderFromModelId(model.id);
-    const existing = grouped.get(provider) || [];
-    existing.push(model);
-    grouped.set(provider, existing);
-  }
-
-  return grouped;
-}
-
 export const AISettings: Component = () => {
   const navigate = useNavigate();
   const [settings, setSettings] = createSignal<AISettingsType | null>(null);
@@ -115,7 +56,7 @@ export const AISettings: Component = () => {
   const [testing, setTesting] = createSignal(false);
 
   // Dynamic model list from provider API
-  const [availableModels, setAvailableModels] = createSignal<{ id: string; name: string; description?: string }[]>([]);
+  const [availableModels, setAvailableModels] = createSignal<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = createSignal(false);
 
   const [chatSessions, setChatSessions] = createSignal<ChatSession[]>([]);

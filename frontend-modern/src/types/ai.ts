@@ -9,6 +9,7 @@ export interface ModelInfo {
   description?: string;
   is_default?: boolean;
   notable?: boolean;
+  provider?: AIProvider;
 }
 
 export interface AISettings {

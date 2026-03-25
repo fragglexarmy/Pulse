@@ -146,8 +146,9 @@ func TestAISettingsHandler_ListModels_Ollama(t *testing.T) {
 
 	var resp struct {
 		Models []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Provider string `json:"provider"`
 		} `json:"models"`
 		Error string `json:"error"`
 	}
@@ -159,6 +160,11 @@ func TestAISettingsHandler_ListModels_Ollama(t *testing.T) {
 	}
 	if len(resp.Models) != 2 {
 		t.Fatalf("expected 2 models, got %+v", resp.Models)
+	}
+	for _, model := range resp.Models {
+		if model.Provider != config.AIProviderOllama {
+			t.Fatalf("expected ollama provider for model %+v", model)
+		}
 	}
 }
 

@@ -51,6 +51,17 @@ describe('aiChatUtils', () => {
       expect(grouped.get('openai')?.map((m) => m.id)).toEqual(['openai:gpt-4o']);
       expect(grouped.get('anthropic')?.map((m) => m.id)).toEqual(['claude-3-5-sonnet']);
     });
+
+    it('prefers explicit provider metadata over name heuristics', () => {
+      const models: ModelInfo[] = [
+        { id: 'llama3-8b', name: 'Llama 3 8B', provider: 'openai' },
+        { id: 'qwen3.5-27b', name: 'Qwen 3.5 27B', provider: 'openai' },
+      ];
+
+      const grouped = utils.groupModelsByProvider(models);
+      expect(Array.from(grouped.keys())).toEqual(['openai']);
+      expect(grouped.get('openai')?.map((m) => m.id)).toEqual(['llama3-8b', 'qwen3.5-27b']);
+    });
   });
 
   describe('sanitizeThinking', () => {

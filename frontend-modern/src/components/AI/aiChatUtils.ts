@@ -1,66 +1,6 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import type { ModelInfo } from '@/types/ai';
-
-// Provider display names for grouped model selection
-export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  deepseek: 'DeepSeek',
-  gemini: 'Google Gemini',
-  ollama: 'Ollama',
-};
-
-// Known provider prefixes — only these are treated as explicit "provider:model" delimiters.
-// This avoids misinterpreting colons in model names like "llama3.2:latest" or "model:free".
-const KNOWN_PROVIDERS = ['anthropic', 'openai', 'deepseek', 'gemini', 'ollama'];
-
-// Parse provider from model ID (format: "provider:model-name")
-export function getProviderFromModelId(modelId: string): string {
-  // Check for explicit known provider prefix (e.g. "openai:gpt-4o")
-  const colonIndex = modelId.indexOf(':');
-  if (colonIndex > 0) {
-    const prefix = modelId.substring(0, colonIndex);
-    if (KNOWN_PROVIDERS.includes(prefix)) {
-      return prefix;
-    }
-  }
-  // Vendor-prefixed names like "google/gemini-*" or "meta-llama/llama-*" are
-  // OpenRouter model IDs routed through the OpenAI-compatible provider.
-  if (modelId.includes('/')) {
-    return 'openai';
-  }
-  // Strip colon suffix for detection (e.g. "llama3.2:latest" → "llama3.2")
-  const name = colonIndex > 0 ? modelId.substring(0, colonIndex) : modelId;
-  // Default detection for models without prefix
-  if (name.startsWith('claude') || name.startsWith('opus') || name.startsWith('sonnet') || name.startsWith('haiku')) {
-    return 'anthropic';
-  }
-  if (name.startsWith('gpt') || name.startsWith('o1') || name.startsWith('o3') || name.startsWith('o4')) {
-    return 'openai';
-  }
-  if (name.startsWith('deepseek')) {
-    return 'deepseek';
-  }
-  if (name.startsWith('gemini')) {
-    return 'gemini';
-  }
-  return 'ollama';
-}
-
-// Group models by provider for grouped rendering
-export function groupModelsByProvider(models: ModelInfo[]): Map<string, ModelInfo[]> {
-  const grouped = new Map<string, ModelInfo[]>();
-
-  for (const model of models) {
-    const provider = getProviderFromModelId(model.id);
-    const existing = grouped.get(provider) || [];
-    existing.push(model);
-    grouped.set(provider, existing);
-  }
-
-  return grouped;
-}
+export { PROVIDER_DISPLAY_NAMES, getProviderForModel, getProviderFromModelId, groupModelsByProvider } from '@/utils/aiModels';
 
 // Configure marked for safe rendering
 marked.setOptions({

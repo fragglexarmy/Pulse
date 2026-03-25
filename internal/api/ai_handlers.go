@@ -1738,6 +1738,7 @@ func (h *AISettingsHandler) HandleListModels(w http.ResponseWriter, r *http.Requ
 		Description string `json:"description,omitempty"`
 		CreatedAt   int64  `json:"created_at,omitempty"`
 		Notable     bool   `json:"notable"`
+		Provider    string `json:"provider,omitempty"`
 	}
 
 	type Response struct {
@@ -1772,6 +1773,7 @@ func (h *AISettingsHandler) HandleListModels(w http.ResponseWriter, r *http.Requ
 			Description: m.Description,
 			CreatedAt:   m.CreatedAt,
 			Notable:     m.Notable,
+			Provider:    m.Provider,
 		})
 	}
 

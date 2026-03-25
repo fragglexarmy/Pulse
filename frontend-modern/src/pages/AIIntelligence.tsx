@@ -25,6 +25,7 @@ interface ModelInfo {
   name: string;
   description: string;
   notable: boolean;
+  provider?: 'anthropic' | 'openai' | 'ollama' | 'deepseek' | 'gemini';
 }
 
 interface AISettings {
