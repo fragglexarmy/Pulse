@@ -36,22 +36,22 @@ import type { ColumnConfig } from '@/types/responsive';
 import { DiscoveryTab } from '@/components/Discovery/DiscoveryTab';
 import { HistoryChart } from '@/components/shared/HistoryChart';
 import type { HistoryTimeRange } from '@/api/charts';
-import { GuestMetadataAPI, type GuestMetadata } from '@/api/guestMetadata';
+import { DockerMetadataAPI, type DockerMetadata } from '@/api/dockerMetadata';
 import { UrlEditPopover, createUrlEditState } from '@/components/shared/UrlEditPopover';
 import { showSuccess, showError } from '@/utils/toast';
 import { logger } from '@/utils/logger';
 import { useAlertsActivation } from '@/stores/alertsActivation';
 
-type GuestMetadataRecord = Record<string, GuestMetadata>;
+type DockerMetadataRecord = Record<string, DockerMetadata>;
 
-// Module-level cache for guest metadata to persist across component remounts
-let cachedDockerGuestMetadata: GuestMetadataRecord | null = null;
+// Module-level cache for Docker resource metadata to persist across component remounts
+let cachedDockerGuestMetadata: DockerMetadataRecord | null = null;
 
-const getDockerGuestMetadataCache = (): GuestMetadataRecord => {
+const getDockerGuestMetadataCache = (): DockerMetadataRecord => {
   return cachedDockerGuestMetadata ?? {};
 };
 
-const setDockerGuestMetadataCache = (metadata: GuestMetadataRecord) => {
+const setDockerGuestMetadataCache = (metadata: DockerMetadataRecord) => {
   cachedDockerGuestMetadata = metadata;
 };
 
@@ -807,7 +807,7 @@ const DockerContainerRow: Component<{
   showHostContext?: boolean;
   resourceIndentClass?: string;
   batchUpdateState?: Record<string, 'updating' | 'queued' | 'error'>;
-  guestMetadata?: GuestMetadataRecord;
+  guestMetadata?: DockerMetadataRecord;
   onCustomUrlChange?: (guestId: string, url: string) => void;
 }> = (props) => {
   const { host, container } = props.row;
@@ -817,6 +817,7 @@ const DockerContainerRow: Component<{
   const hostStatus = createMemo(() => getDockerHostStatusIndicator(host));
   const hostDisplayName = () => getHostDisplayName(host);
   const rowId = buildRowId(host, props.row);
+  const metadataId = () => `${host.id}:container:${container.id}`;
 
   const resourceIndent = () => props.resourceIndentClass ?? GROUPED_RESOURCE_INDENT;
 
@@ -903,19 +904,19 @@ const DockerContainerRow: Component<{
     );
   });
 
-  const containerCustomUrl = createMemo(() => props.guestMetadata?.[container.id]?.customUrl);
+  const containerCustomUrl = createMemo(() => props.guestMetadata?.[metadataId()]?.customUrl);
   const urlEdit = createUrlEditState();
 
   const handleStartEditingUrl = (event: MouseEvent) => {
-    urlEdit.startEditing(container.id, containerCustomUrl() || '', event);
+    urlEdit.startEditing(metadataId(), containerCustomUrl() || '', event);
   };
 
   const handleSaveUrl = async () => {
     const newUrl = urlEdit.editingValue().trim();
     urlEdit.setIsSaving(true);
     try {
-      await GuestMetadataAPI.updateMetadata(container.id, { customUrl: newUrl });
-      if (props.onCustomUrlChange) props.onCustomUrlChange(container.id, newUrl);
+      await DockerMetadataAPI.updateMetadata(metadataId(), { customUrl: newUrl });
+      if (props.onCustomUrlChange) props.onCustomUrlChange(metadataId(), newUrl);
       showSuccess(newUrl ? 'Container URL saved' : 'Container URL cleared');
       urlEdit.finishEditing();
     } catch (err: unknown) {
@@ -929,8 +930,8 @@ const DockerContainerRow: Component<{
   const handleDeleteUrl = async () => {
     urlEdit.setIsSaving(true);
     try {
-      await GuestMetadataAPI.updateMetadata(container.id, { customUrl: '' });
-      if (props.onCustomUrlChange) props.onCustomUrlChange(container.id, '');
+      await DockerMetadataAPI.updateMetadata(metadataId(), { customUrl: '' });
+      if (props.onCustomUrlChange) props.onCustomUrlChange(metadataId(), '');
       showSuccess('Container URL removed');
       urlEdit.finishEditing();
     } catch (err: unknown) {
@@ -1694,9 +1695,9 @@ const DockerContainerRow: Component<{
                   hostId={host.agentId || host.id}
                   resourceId={container.name || container.id}
                   hostname={container.name}
-                  guestId={container.id}
-                  customUrl={props.guestMetadata?.[container.id]?.customUrl}
-                  onCustomUrlChange={(url) => props.onCustomUrlChange?.(container.id, url)}
+                  guestId={metadataId()}
+                  customUrl={props.guestMetadata?.[metadataId()]?.customUrl}
+                  onCustomUrlChange={(url) => props.onCustomUrlChange?.(metadataId(), url)}
                 />
               </Show>
             </div>
@@ -1712,7 +1713,7 @@ const DockerServiceRow: Component<{
   isMobile: Accessor<boolean>;
   showHostContext?: boolean;
   resourceIndentClass?: string;
-  guestMetadata?: GuestMetadataRecord;
+  guestMetadata?: DockerMetadataRecord;
   onCustomUrlChange?: (guestId: string, url: string) => void;
 }> = (props) => {
   const { host, service, tasks } = props.row;
@@ -1739,7 +1740,7 @@ const DockerServiceRow: Component<{
     const newUrl = svcUrlEdit.editingValue().trim();
     svcUrlEdit.setIsSaving(true);
     try {
-      await GuestMetadataAPI.updateMetadata(resourceId(), { customUrl: newUrl });
+      await DockerMetadataAPI.updateMetadata(resourceId(), { customUrl: newUrl });
       if (props.onCustomUrlChange) props.onCustomUrlChange(resourceId(), newUrl);
       showSuccess(newUrl ? 'Service URL saved' : 'Service URL cleared');
       svcUrlEdit.finishEditing();
@@ -1754,7 +1755,7 @@ const DockerServiceRow: Component<{
   const handleDeleteSvcUrl = async () => {
     svcUrlEdit.setIsSaving(true);
     try {
-      await GuestMetadataAPI.updateMetadata(resourceId(), { customUrl: '' });
+      await DockerMetadataAPI.updateMetadata(resourceId(), { customUrl: '' });
       if (props.onCustomUrlChange) props.onCustomUrlChange(resourceId(), '');
       showSuccess('Service URL removed');
       svcUrlEdit.finishEditing();
@@ -2200,27 +2201,27 @@ const DockerUnifiedTable: Component<DockerUnifiedTableProps> = (props) => {
   // Use the breakpoint hook for responsive behavior
   const { isMobile } = useBreakpoint();
 
-  // Guest metadata for tracking custom URLs
-  const [guestMetadata, setGuestMetadata] = createSignal<GuestMetadataRecord>(getDockerGuestMetadataCache());
+  // Docker resource metadata for tracking custom URLs
+  const [guestMetadata, setGuestMetadata] = createSignal<DockerMetadataRecord>(getDockerGuestMetadataCache());
 
   // Load guest metadata on mount
   onMount(async () => {
     try {
-      const metadata = await GuestMetadataAPI.getAllMetadata();
+      const metadata = await DockerMetadataAPI.getAllMetadata();
       setGuestMetadata(metadata ?? {});
       setDockerGuestMetadataCache(metadata ?? {});
     } catch (err) {
-      logger.debug('Failed to load guest metadata for Docker', err);
+      logger.debug('Failed to load Docker metadata', err);
     }
 
     // Listen for metadata changes from other sources (e.g., AI, other tabs)
     const handleMetadataChanged = async () => {
       try {
-        const metadata = await GuestMetadataAPI.getAllMetadata();
+        const metadata = await DockerMetadataAPI.getAllMetadata();
         setGuestMetadata(metadata ?? {});
         setDockerGuestMetadataCache(metadata ?? {});
       } catch (err) {
-        logger.debug('Failed to refresh guest metadata', err);
+        logger.debug('Failed to refresh Docker metadata', err);
       }
     };
 
@@ -2238,7 +2239,7 @@ const DockerUnifiedTable: Component<DockerUnifiedTableProps> = (props) => {
       } else if (updated[guestId]) {
         const { customUrl: _, ...rest } = updated[guestId];
         if (Object.keys(rest).length > 1) {
-          updated[guestId] = rest as GuestMetadata;
+          updated[guestId] = rest as DockerMetadata;
         } else {
           delete updated[guestId];
         }
