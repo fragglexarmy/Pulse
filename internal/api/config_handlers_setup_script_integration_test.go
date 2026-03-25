@@ -67,6 +67,33 @@ echo "STATE AUTO_REG_SUCCESS=${AUTO_REG_SUCCESS} TOKEN_ROTATION_SKIPPED=${TOKEN_
 		assertContains(t, trace, "pveum user token add pulse-monitor@pam pulse-sentinel-url --privsep 0")
 		assertContains(t, trace, "curl -s -X POST")
 	})
+
+	t.Run("json_output_auto_registers_without_legacy_fallback", func(t *testing.T) {
+		output, trace := runSetupHarness(t, harness, mocks, map[string]string{
+			"MOCK_PVE_TOKEN_FORMAT": "json",
+		})
+
+		assertContains(t, output, "API token generated successfully")
+		assertContains(t, output, "Node registered successfully")
+		assertContains(t, output, "STATE AUTO_REG_SUCCESS=true TOKEN_ROTATION_SKIPPED=false TOKEN_VALUE=mocked-pve-secret")
+
+		assertContains(t, trace, "pveum user token add pulse-monitor@pam pulse-sentinel-url --privsep 0 --output-format json")
+		assertNotContains(t, trace, "pveum user token add pulse-monitor@pam pulse-sentinel-url --privsep 0\n")
+	})
+
+	t.Run("legacy_output_falls_back_when_json_format_is_unsupported", func(t *testing.T) {
+		output, trace := runSetupHarness(t, harness, mocks, map[string]string{
+			"MOCK_PVE_JSON_UNSUPPORTED": "1",
+		})
+
+		assertContains(t, output, "API token generated successfully")
+		assertContains(t, output, "Node registered successfully")
+		assertContains(t, output, "STATE AUTO_REG_SUCCESS=true TOKEN_ROTATION_SKIPPED=false TOKEN_VALUE=mocked-pve-secret")
+
+		assertContains(t, trace, "pveum user token add pulse-monitor@pam pulse-sentinel-url --privsep 0 --output-format json")
+		assertContains(t, trace, "pveum user token add pulse-monitor@pam pulse-sentinel-url --privsep 0")
+		assertContains(t, trace, "curl -s -X POST")
+	})
 }
 
 func TestSetupScriptTokenLifecycleIntegration_PBS(t *testing.T) {
@@ -227,6 +254,18 @@ case "$*" in
     fi
     ;;
   "user token remove pulse-monitor@pam pulse-sentinel-url")
+    ;;
+  "user token add pulse-monitor@pam pulse-sentinel-url --privsep 0 --output-format json")
+    if [ "${MOCK_PVE_JSON_UNSUPPORTED:-0}" = "1" ]; then
+      echo "unknown option: output-format" >&2
+      exit 1
+    fi
+    if [ "${MOCK_PVE_TOKEN_FORMAT:-table}" = "json" ]; then
+      echo '{"tokenid":"pulse-monitor@pam!pulse-sentinel-url","value":"mocked-pve-secret"}'
+      exit 0
+    fi
+    # Some versions support the flag but still keep older text rendering in wrappers.
+    printf '\342\224\202 value \342\224\202 mocked-pve-secret \342\224\202\n'
     ;;
   "user token add pulse-monitor@pam pulse-sentinel-url --privsep 0")
     # Emit the box-drawing format parsed by the setup script (│ value │ secret │)

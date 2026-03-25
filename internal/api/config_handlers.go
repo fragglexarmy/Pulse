@@ -4308,6 +4308,66 @@ resolve_setup_auth_token() {
 	fi
 }
 
+extract_json_string_field() {
+    local json_input="$1"
+    local field_name="$2"
+
+    printf '%%s\n' "$json_input" | sed -n 's/.*"'$field_name'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1
+}
+
+extract_pve_token_value() {
+    local token_output="$1"
+    local token_value=""
+
+    token_value=$(extract_json_string_field "$token_output" "value")
+    if [ -n "$token_value" ]; then
+        printf '%%s\n' "$token_value"
+        return 0
+    fi
+
+    printf '%%s\n' "$token_output" | awk -F'[|│]' '
+        function trim(value) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            return value
+        }
+
+        {
+            key = trim($2)
+            value = trim($3)
+            if (key == "value" && value != "") {
+                print value
+                exit
+            }
+        }
+    '
+}
+
+create_pve_token() {
+    if TOKEN_OUTPUT=$(pveum user token add pulse-monitor@pam "$TOKEN_NAME" --privsep 0 --output-format json 2>&1); then
+        TOKEN_CREATE_RC=0
+    else
+        TOKEN_CREATE_RC=$?
+    fi
+
+    if [ "$TOKEN_CREATE_RC" -eq 0 ]; then
+        TOKEN_VALUE=$(extract_pve_token_value "$TOKEN_OUTPUT")
+        return 0
+    fi
+
+    if echo "$TOKEN_OUTPUT" | grep -Eqi 'unknown option|unknown command|no such option|unable to parse option|output-format'; then
+        if TOKEN_OUTPUT=$(pveum user token add pulse-monitor@pam "$TOKEN_NAME" --privsep 0 2>&1); then
+            TOKEN_CREATE_RC=0
+        else
+            TOKEN_CREATE_RC=$?
+        fi
+        if [ "$TOKEN_CREATE_RC" -eq 0 ]; then
+            TOKEN_VALUE=$(extract_pve_token_value "$TOKEN_OUTPUT")
+        fi
+    fi
+
+    return "$TOKEN_CREATE_RC"
+}
+
 attempt_auto_registration() {
     resolve_setup_auth_token
 
@@ -4407,8 +4467,7 @@ fi
 
 if [ "$TOKEN_ROTATION_SKIPPED" != true ]; then
     # Create token and capture value (shown once by Proxmox)
-    TOKEN_OUTPUT=$(pveum user token add pulse-monitor@pam "$TOKEN_NAME" --privsep 0 2>&1)
-    TOKEN_CREATE_RC=$?
+    create_pve_token
     if [ "$TOKEN_CREATE_RC" -ne 0 ]; then
         echo "❌ Failed to create token '$TOKEN_NAME'"
         echo "$TOKEN_OUTPUT"
@@ -4416,8 +4475,6 @@ if [ "$TOKEN_ROTATION_SKIPPED" != true ]; then
         echo "Manual registration may be required."
         echo ""
     else
-        TOKEN_VALUE=$(echo "$TOKEN_OUTPUT" | grep "│ value" | awk -F'│' '{print $3}' | tr -d ' ' | tail -1)
-
         if [ -z "$TOKEN_VALUE" ]; then
             echo ""
             echo "================================================================"
