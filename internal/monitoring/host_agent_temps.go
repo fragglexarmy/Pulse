@@ -21,6 +21,16 @@ func (m *Monitor) getHostAgentTemperature(nodeName string) *models.Temperature {
 	return m.getHostAgentTemperatureByID("", nodeName)
 }
 
+func shouldSkipTemperatureSSHCollection(hostAgentTemp *models.Temperature) bool {
+	if hostAgentTemp == nil {
+		return false
+	}
+
+	// Host agent CPU/NVMe readings are preferred, but we still need SSH when the
+	// host agent has not provided SMART disk temperatures yet.
+	return hostAgentTemp.HasSMART
+}
+
 // getHostAgentTemperatureByID looks for a matching host agent by node ID first,
 // then falls back to hostname matching. This correctly handles clusters where
 // multiple nodes may have the same hostname (e.g., "px1" on different IPs).
