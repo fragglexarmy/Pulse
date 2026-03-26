@@ -1531,36 +1531,26 @@ func (m *Monitor) pollStorageWithNodes(ctx context.Context, instanceName string,
 			enableZFSMonitoring := os.Getenv("PULSE_DISABLE_ZFS_MONITORING") != "true" // Enabled by default
 
 			if enableZFSMonitoring {
-				hasZFSStorage := false
-				for _, storage := range nodeStorage {
-					if storage.Type == "zfspool" || storage.Type == "zfs" || storage.Type == "local-zfs" {
-						hasZFSStorage = true
-						break
-					}
-				}
+				if poolInfos, err := client.GetZFSPoolsWithDetails(ctx, n.Node); err == nil {
+					log.Debug().
+						Str("node", n.Node).
+						Int("pools", len(poolInfos)).
+						Msg("Successfully fetched ZFS pool details")
 
-				if hasZFSStorage {
-					if poolInfos, err := client.GetZFSPoolsWithDetails(ctx, n.Node); err == nil {
-						log.Debug().
-							Str("node", n.Node).
-							Int("pools", len(poolInfos)).
-							Msg("Successfully fetched ZFS pool details")
-
-						// Convert to our model format
-						for _, poolInfo := range poolInfos {
-							modelPool := convertPoolInfoToModel(&poolInfo)
-							if modelPool != nil {
-								zfsPoolMap[poolInfo.Name] = modelPool
-							}
+					// Convert to our model format
+					for _, poolInfo := range poolInfos {
+						modelPool := convertPoolInfoToModel(&poolInfo)
+						if modelPool != nil {
+							zfsPoolMap[poolInfo.Name] = modelPool
 						}
-					} else {
-						// Log but don't fail - ZFS monitoring is optional
-						log.Debug().
-							Err(err).
-							Str("node", n.Node).
-							Str("instance", instanceName).
-							Msg("Could not get ZFS pool status (may require additional permissions)")
 					}
+				} else {
+					// Log but don't fail - ZFS monitoring is optional
+					log.Debug().
+						Err(err).
+						Str("node", n.Node).
+						Str("instance", instanceName).
+						Msg("Could not get ZFS pool status (may require additional permissions)")
 				}
 			}
 
@@ -1627,10 +1617,10 @@ func (m *Monitor) pollStorageWithNodes(ctx context.Context, instanceName string,
 					}
 				}
 
-				// If this is ZFS storage, attach pool status information.
-				if storage.Type == "zfspool" || storage.Type == "zfs" || storage.Type == "local-zfs" {
-					modelStorage.ZFSPool = matchZFSPoolForStorage(modelStorage, zfsPoolMap)
-				}
+				// Attach ZFS pool status information whenever the storage name or
+				// dataset path resolves to a known pool, even for dir storages
+				// backed by ZFS datasets.
+				modelStorage.ZFSPool = matchZFSPoolForStorage(modelStorage, zfsPoolMap)
 
 				// Override with cluster config if available, but only when the
 				// cluster metadata explicitly carries those flags. Some storage
