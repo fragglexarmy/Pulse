@@ -14,8 +14,9 @@ import (
 
 // fakeStorageClient provides minimal PVE responses needed by the optimized storage poller.
 type fakeStorageClient struct {
-	allStorage    []proxmox.Storage
-	storageByNode map[string][]proxmox.Storage
+	allStorage     []proxmox.Storage
+	storageByNode  map[string][]proxmox.Storage
+	zfsPoolsByNode map[string][]proxmox.ZFSPoolInfo
 }
 
 func (f *fakeStorageClient) GetNodes(ctx context.Context) ([]proxmox.Node, error) {
@@ -125,6 +126,9 @@ func (f *fakeStorageClient) GetZFSPoolStatus(ctx context.Context, node string) (
 }
 
 func (f *fakeStorageClient) GetZFSPoolsWithDetails(ctx context.Context, node string) ([]proxmox.ZFSPoolInfo, error) {
+	if pools, ok := f.zfsPoolsByNode[node]; ok {
+		return pools, nil
+	}
 	return nil, nil
 }
 
@@ -227,5 +231,114 @@ func TestPollStorageWithNodesOptimizedRecordsMetricsAndAlerts(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected storage usage alert to be active")
+	}
+}
+
+func TestMatchZFSPoolForStorage(t *testing.T) {
+	t.Parallel()
+
+	rpool := &models.ZFSPool{Name: "rpool"}
+	tank := &models.ZFSPool{Name: "tank"}
+
+	cases := []struct {
+		name    string
+		storage models.Storage
+		pools   map[string]*models.ZFSPool
+		want    string
+	}{
+		{
+			name:    "exact storage name match",
+			storage: models.Storage{Name: "tank"},
+			pools:   map[string]*models.ZFSPool{"tank": tank},
+			want:    "tank",
+		},
+		{
+			name:    "matches pool from dataset path",
+			storage: models.Storage{Name: "local-zfs", Path: "/rpool/data"},
+			pools:   map[string]*models.ZFSPool{"rpool": rpool},
+			want:    "rpool",
+		},
+		{
+			name:    "single pool fallback for local zfs",
+			storage: models.Storage{Name: "local-zfs", Type: "local-zfs"},
+			pools:   map[string]*models.ZFSPool{"rpool": rpool},
+			want:    "rpool",
+		},
+		{
+			name:    "no ambiguous fallback across multiple pools",
+			storage: models.Storage{Name: "local-zfs"},
+			pools:   map[string]*models.ZFSPool{"rpool": rpool, "tank": tank},
+			want:    "",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			matched := matchZFSPoolForStorage(tc.storage, tc.pools)
+			if tc.want == "" {
+				if matched != nil {
+					t.Fatalf("matched pool = %q, want nil", matched.Name)
+				}
+				return
+			}
+			if matched == nil {
+				t.Fatalf("expected pool %q, got nil", tc.want)
+			}
+			if matched.Name != tc.want {
+				t.Fatalf("matched pool = %q, want %q", matched.Name, tc.want)
+			}
+		})
+	}
+}
+
+func TestPollStorageWithNodesOptimizedAttachesZFSPoolFromDatasetPath(t *testing.T) {
+	t.Setenv("PULSE_DATA_DIR", t.TempDir())
+
+	monitor := &Monitor{
+		state: &models.State{},
+	}
+
+	storage := proxmox.Storage{
+		Storage:   "local-zfs",
+		Type:      "local-zfs",
+		Content:   "images,rootdir",
+		Active:    1,
+		Enabled:   1,
+		Shared:    0,
+		Path:      "/rpool/data",
+		Total:     1000,
+		Used:      400,
+		Available: 600,
+	}
+
+	client := &fakeStorageClient{
+		allStorage: []proxmox.Storage{storage},
+		storageByNode: map[string][]proxmox.Storage{
+			"pve1": {storage},
+		},
+		zfsPoolsByNode: map[string][]proxmox.ZFSPoolInfo{
+			"pve1": {
+				{Name: "rpool", State: "ONLINE", Health: "ONLINE"},
+			},
+		},
+	}
+
+	nodes := []proxmox.Node{
+		{Node: "pve1", Status: "online"},
+	}
+
+	monitor.pollStorageWithNodes(context.Background(), "inst1", client, nodes)
+
+	if len(monitor.state.Storage) != 1 {
+		t.Fatalf("expected 1 storage entry, got %d", len(monitor.state.Storage))
+	}
+	if monitor.state.Storage[0].ZFSPool == nil {
+		t.Fatal("expected ZFS pool details to be attached")
+	}
+	if monitor.state.Storage[0].ZFSPool.Name != "rpool" {
+		t.Fatalf("ZFS pool name = %q, want rpool", monitor.state.Storage[0].ZFSPool.Name)
 	}
 }

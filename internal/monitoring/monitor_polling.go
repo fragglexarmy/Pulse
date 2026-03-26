@@ -184,6 +184,70 @@ func convertPoolInfoToModel(poolInfo *proxmox.ZFSPoolInfo) *models.ZFSPool {
 	return modelPool
 }
 
+func matchZFSPoolForStorage(storage models.Storage, zfsPoolMap map[string]*models.ZFSPool) *models.ZFSPool {
+	if len(zfsPoolMap) == 0 {
+		return nil
+	}
+
+	normalizedPools := make(map[string]*models.ZFSPool, len(zfsPoolMap))
+	var solePool *models.ZFSPool
+	for name, pool := range zfsPoolMap {
+		normalizedName := strings.ToLower(strings.Trim(strings.TrimSpace(name), "/"))
+		if normalizedName == "" || pool == nil {
+			continue
+		}
+		normalizedPools[normalizedName] = pool
+		solePool = pool
+	}
+
+	lookupCandidate := func(candidate string) *models.ZFSPool {
+		normalized := strings.ToLower(strings.Trim(strings.TrimSpace(candidate), "/"))
+		if normalized == "" {
+			return nil
+		}
+		if pool, ok := normalizedPools[normalized]; ok {
+			return pool
+		}
+		if idx := strings.Index(normalized, "/"); idx > 0 {
+			if pool, ok := normalizedPools[normalized[:idx]]; ok {
+				return pool
+			}
+		}
+		return nil
+	}
+
+	candidates := []string{
+		storage.Name,
+		storage.Path,
+	}
+
+	trimmedPath := strings.Trim(strings.TrimSpace(storage.Path), "/")
+	if trimmedPath != "" {
+		candidates = append(candidates, trimmedPath)
+		if idx := strings.Index(trimmedPath, "/"); idx > 0 {
+			candidates = append(candidates, trimmedPath[:idx])
+		}
+	}
+
+	normalizedName := strings.TrimSpace(storage.Name)
+	if strings.HasSuffix(strings.ToLower(normalizedName), "-zfs") {
+		candidates = append(candidates, strings.TrimSuffix(normalizedName, "-zfs"))
+		candidates = append(candidates, strings.TrimSuffix(normalizedName, "-ZFS"))
+	}
+
+	for _, candidate := range candidates {
+		if pool := lookupCandidate(candidate); pool != nil {
+			return pool
+		}
+	}
+
+	if len(normalizedPools) == 1 {
+		return solePool
+	}
+
+	return nil
+}
+
 // pollVMsWithNodes polls VMs from all nodes in parallel using goroutines
 // When the instance is part of a cluster, the cluster name is used for guest IDs to prevent duplicates
 // when multiple cluster nodes are configured as separate PVE instances.
@@ -1563,31 +1627,9 @@ func (m *Monitor) pollStorageWithNodes(ctx context.Context, instanceName string,
 					}
 				}
 
-				// If this is ZFS storage, attach pool status information
+				// If this is ZFS storage, attach pool status information.
 				if storage.Type == "zfspool" || storage.Type == "zfs" || storage.Type == "local-zfs" {
-					// Try to match by storage name or by common ZFS pool names
-					poolName := storage.Storage
-
-					// Common mappings
-					if poolName == "local-zfs" {
-						poolName = "rpool/data" // Common default
-					}
-
-					// Look for exact match first
-					if pool, found := zfsPoolMap[poolName]; found {
-						modelStorage.ZFSPool = pool
-					} else {
-						// Try partial matches for common patterns
-						for name, pool := range zfsPoolMap {
-							if name == "rpool" && strings.Contains(storage.Storage, "rpool") {
-								modelStorage.ZFSPool = pool
-								break
-							} else if name == "data" && strings.Contains(storage.Storage, "data") {
-								modelStorage.ZFSPool = pool
-								break
-							}
-						}
-					}
+					modelStorage.ZFSPool = matchZFSPoolForStorage(modelStorage, zfsPoolMap)
 				}
 
 				// Override with cluster config if available, but only when the
