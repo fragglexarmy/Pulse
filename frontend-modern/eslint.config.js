@@ -21,6 +21,7 @@ export default tseslint.config(
         },
         rules: {
             ...solid.configs.typescript.rules,
+            "no-unassigned-vars": "off",
             "@typescript-eslint/no-unused-vars": [
                 "warn",
                 {

@@ -307,16 +307,22 @@ export const HistoryChart: Component<HistoryChartProps> = (props) => {
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'right';
             ctx.textBaseline = 'middle';
-            let label = '';
-            if (isPercentLike) {
-                label = pct === 0 ? '0%' : pct === 1 ? '100%' : '50%';
-            } else if (isByteLike) {
-                label = pct === 0 ? '0' : pct === 1 ? 'Max' : 'Avg';
-            } else {
-                // Absolute numeric values (temperature, counters) — show computed scale
-                const scaleVal = Math.round(minValue + pct * (maxValue - minValue));
-                label = pct === 0 ? '0' : `${scaleVal}`;
-            }
+            const label = isPercentLike
+              ? pct === 0
+                ? '0%'
+                : pct === 1
+                  ? '100%'
+                  : '50%'
+              : isByteLike
+                ? pct === 0
+                  ? '0'
+                  : pct === 1
+                    ? 'Max'
+                    : 'Avg'
+                : (() => {
+                    const scaleVal = Math.round(minValue + pct * (maxValue - minValue));
+                    return pct === 0 ? '0' : `${scaleVal}`;
+                  })();
             ctx.fillText(label, 35, y);
         });
 

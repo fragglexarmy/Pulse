@@ -45,21 +45,10 @@ const Tooltip: Component<TooltipProps> = (props) => {
 
       const rect = tooltipRef.getBoundingClientRect();
       const padding = 8;
-      let left = props.x;
-      let top = props.y;
-
       const align = props.align ?? 'center';
       const direction = props.direction ?? 'up';
-
-      if (align === 'center') {
-        left = props.x - rect.width / 2;
-      }
-
-      if (direction === 'up') {
-        top = props.y - rect.height - padding;
-      } else {
-        top = props.y + padding;
-      }
+      let left = align === 'center' ? props.x - rect.width / 2 : props.x;
+      let top = direction === 'up' ? props.y - rect.height - padding : props.y + padding;
 
       // Clamp to viewport bounds with small offset to avoid touching edges
       const viewportPadding = 4;

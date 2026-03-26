@@ -964,32 +964,33 @@ export const HostsOverview: Component = () => {
     const direction = sortDirection();
 
     return hostList.sort((a: Host, b: Host) => {
-      let comparison = 0;
-      switch (key) {
-        case 'name':
-          comparison = (a.displayName || a.hostname || a.id).localeCompare(b.displayName || b.hostname || b.id);
-          break;
-        case 'platform':
-          comparison = (a.platform || '').localeCompare(b.platform || '');
-          break;
-        case 'cpu':
-          comparison = (a.cpuUsage ?? 0) - (b.cpuUsage ?? 0);
-          break;
-        case 'memory':
-          comparison = (a.memory?.usage ?? 0) - (b.memory?.usage ?? 0);
-          break;
-        case 'disk': {
-          const aDisk = a.disks?.reduce((sum: number, d: { usage?: number }) => sum + (d.usage ?? 0), 0) ?? 0;
-          const bDisk = b.disks?.reduce((sum: number, d: { usage?: number }) => sum + (d.usage ?? 0), 0) ?? 0;
-          comparison = aDisk - bDisk;
-          break;
+      const comparison = (() => {
+        switch (key) {
+          case 'name':
+            return (a.displayName || a.hostname || a.id).localeCompare(
+              b.displayName || b.hostname || b.id,
+            );
+          case 'platform':
+            return (a.platform || '').localeCompare(b.platform || '');
+          case 'cpu':
+            return (a.cpuUsage ?? 0) - (b.cpuUsage ?? 0);
+          case 'memory':
+            return (a.memory?.usage ?? 0) - (b.memory?.usage ?? 0);
+          case 'disk': {
+            const aDisk =
+              a.disks?.reduce((sum: number, d: { usage?: number }) => sum + (d.usage ?? 0), 0) ??
+              0;
+            const bDisk =
+              b.disks?.reduce((sum: number, d: { usage?: number }) => sum + (d.usage ?? 0), 0) ??
+              0;
+            return aDisk - bDisk;
+          }
+          case 'uptime':
+            return (a.uptimeSeconds ?? 0) - (b.uptimeSeconds ?? 0);
+          default:
+            return 0;
         }
-        case 'uptime':
-          comparison = (a.uptimeSeconds ?? 0) - (b.uptimeSeconds ?? 0);
-          break;
-        default:
-          comparison = 0;
-      }
+      })();
       return direction === 'asc' ? comparison : -comparison;
     });
   });

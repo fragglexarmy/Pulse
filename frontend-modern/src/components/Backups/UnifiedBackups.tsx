@@ -1940,18 +1940,20 @@ const UnifiedBackups: Component = () => {
                           barsGroup.appendChild(barGroup);
 
                           // Date labels
-                          let showLabel = false;
-                          if (chartTimeRange() <= 7) {
-                            showLabel = true;
-                          } else if (chartTimeRange() <= 30) {
-                            showLabel =
-                              i % Math.ceil(data.length / 10) === 0 || i === data.length - 1;
-                          } else if (chartTimeRange() <= 90) {
+                          const timeRange = chartTimeRange();
+                          const showLabel =
+                            timeRange <= 7
+                              ? true
+                              : timeRange <= 30
+                                ? i % Math.ceil(data.length / 10) === 0 || i === data.length - 1
+                                : timeRange <= 90
+                                  ? (() => {
                             const dayOfWeek = barDate.getDay();
-                            showLabel = dayOfWeek === 0 || i === 0 || i === data.length - 1;
-                          } else {
-                            showLabel = barDate.getDate() === 1 || i === 0 || i === data.length - 1;
-                          }
+                                    return dayOfWeek === 0 || i === 0 || i === data.length - 1;
+                                  })()
+                                  : barDate.getDate() === 1 ||
+                                      i === 0 ||
+                                      i === data.length - 1;
 
                           if (showLabel) {
                             const text = document.createElementNS(
@@ -1968,10 +1970,10 @@ const UnifiedBackups: Component = () => {
 
                             // Use shorter format for horizontal labels
                             let labelText;
-                            if (chartTimeRange() <= 7) {
+                            if (timeRange <= 7) {
                               // For 7 days, show month/day
                               labelText = `${barDate.getMonth() + 1}/${barDate.getDate()}`;
-                            } else if (chartTimeRange() <= 30) {
+                            } else if (timeRange <= 30) {
                               // For 30 days, show day only (or month/day for first of month)
                               labelText =
                                 barDate.getDate() === 1

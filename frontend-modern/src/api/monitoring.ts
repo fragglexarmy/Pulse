@@ -74,7 +74,11 @@ export class MonitoringAPI {
       const parsed = JSON.parse(text) as DeleteDockerHostResponse;
       return parsed;
     } catch (err) {
-      throw new Error((err as Error).message || 'Failed to parse delete docker host response');
+      const parseError = Object.assign(
+        new Error((err as Error).message || 'Failed to parse delete docker host response'),
+        { cause: err },
+      );
+      throw parseError;
     }
   }
 
@@ -291,7 +295,13 @@ export class MonitoringAPI {
     try {
       return JSON.parse(text) as DeleteKubernetesClusterResponse;
     } catch (err) {
-      throw new Error((err as Error).message || 'Failed to parse delete kubernetes cluster response');
+      const parseError = Object.assign(
+        new Error(
+          (err as Error).message || 'Failed to parse delete kubernetes cluster response',
+        ),
+        { cause: err },
+      );
+      throw parseError;
     }
   }
 
@@ -650,7 +660,11 @@ export class MonitoringAPI {
     try {
       return JSON.parse(text) as UpdateDockerContainerResponse;
     } catch (err) {
-      throw new Error((err as Error).message || 'Failed to parse update container response');
+      const parseError = Object.assign(
+        new Error((err as Error).message || 'Failed to parse update container response'),
+        { cause: err },
+      );
+      throw parseError;
     }
   }
 
@@ -692,7 +706,11 @@ export class MonitoringAPI {
     try {
       return JSON.parse(text) as { success: boolean; commandId?: string };
     } catch (err) {
-      throw new Error((err as Error).message || 'Failed to parse check updates response');
+      const parseError = Object.assign(
+        new Error((err as Error).message || 'Failed to parse check updates response'),
+        { cause: err },
+      );
+      throw parseError;
     }
   }
 }

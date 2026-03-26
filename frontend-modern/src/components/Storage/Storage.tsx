@@ -412,41 +412,34 @@ const Storage: Component = () => {
     };
 
     const result = storage.sort((a, b) => {
-      let comparison = 0;
-
-      switch (sortKey()) {
-        case 'node': {
-          const nodeA = (a.nodes && a.nodes.length > 0 ? a.nodes[0] : a.node) ?? '';
-          const nodeB = (b.nodes && b.nodes.length > 0 ? b.nodes[0] : b.node) ?? '';
-          comparison = nodeA.localeCompare(nodeB, undefined, { sensitivity: 'base' });
-          break;
+      let comparison = (() => {
+        switch (sortKey()) {
+          case 'node': {
+            const nodeA = (a.nodes && a.nodes.length > 0 ? a.nodes[0] : a.node) ?? '';
+            const nodeB = (b.nodes && b.nodes.length > 0 ? b.nodes[0] : b.node) ?? '';
+            return nodeA.localeCompare(nodeB, undefined, { sensitivity: 'base' });
+          }
+          case 'type':
+            return (a.type ?? '').localeCompare(b.type ?? '', undefined, {
+              sensitivity: 'base',
+            });
+          case 'status':
+            return (a.status ?? '').localeCompare(b.status ?? '', undefined, {
+              sensitivity: 'base',
+            });
+          case 'usage':
+            return numericCompare(a.usage ?? 0, b.usage ?? 0);
+          case 'free':
+            return numericCompare(a.free ?? 0, b.free ?? 0);
+          case 'total':
+            return numericCompare(a.total ?? 0, b.total ?? 0);
+          case 'name':
+          default:
+            return (a.name ?? '').localeCompare(b.name ?? '', undefined, {
+              sensitivity: 'base',
+            });
         }
-        case 'type':
-          comparison = (a.type ?? '').localeCompare(b.type ?? '', undefined, {
-            sensitivity: 'base',
-          });
-          break;
-        case 'status':
-          comparison = (a.status ?? '').localeCompare(b.status ?? '', undefined, {
-            sensitivity: 'base',
-          });
-          break;
-        case 'usage':
-          comparison = numericCompare(a.usage ?? 0, b.usage ?? 0);
-          break;
-        case 'free':
-          comparison = numericCompare(a.free ?? 0, b.free ?? 0);
-          break;
-        case 'total':
-          comparison = numericCompare(a.total ?? 0, b.total ?? 0);
-          break;
-        case 'name':
-        default:
-          comparison = (a.name ?? '').localeCompare(b.name ?? '', undefined, {
-            sensitivity: 'base',
-          });
-          break;
-      }
+      })();
 
       if (comparison === 0) {
         comparison = (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' });

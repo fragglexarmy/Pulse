@@ -377,9 +377,12 @@ class ApiClient {
 
     try {
       return JSON.parse(text) as T;
-    } catch (_err) {
+    } catch (err) {
       logger.error('Failed to parse JSON response', text);
-      throw new Error('Invalid JSON response from server');
+      const parseError = Object.assign(new Error('Invalid JSON response from server'), {
+        cause: err,
+      });
+      throw parseError;
     }
   }
 

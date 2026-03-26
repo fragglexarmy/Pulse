@@ -750,18 +750,11 @@ export const KubernetesClusters: Component<KubernetesClustersProps> = (props) =>
 
     // Sort clusters
     return filtered.sort((a, b) => {
-      let cmp = 0;
-      switch (key) {
-        case 'name':
-          cmp = getClusterDisplayName(a).localeCompare(getClusterDisplayName(b));
-          break;
-        case 'status':
-          cmp =
-            (normalize(a.status) === 'online' ? 0 : 1) - (normalize(b.status) === 'online' ? 0 : 1);
-          break;
-        default:
-          cmp = getClusterDisplayName(a).localeCompare(getClusterDisplayName(b));
-      }
+      const cmp =
+        key === 'status'
+          ? (normalize(a.status) === 'online' ? 0 : 1) -
+            (normalize(b.status) === 'online' ? 0 : 1)
+          : getClusterDisplayName(a).localeCompare(getClusterDisplayName(b));
       return dir === 'desc' ? -cmp : cmp;
     });
   });
@@ -796,20 +789,12 @@ export const KubernetesClusters: Component<KubernetesClustersProps> = (props) =>
 
     // Sort nodes
     return filtered.sort((a, b) => {
-      let cmp = 0;
-      switch (key) {
-        case 'name':
-          cmp = (a.node.name ?? '').localeCompare(b.node.name ?? '');
-          break;
-        case 'cluster':
-          cmp = getClusterDisplayName(a.cluster).localeCompare(getClusterDisplayName(b.cluster));
-          break;
-        case 'status':
-          cmp = (a.node.ready ? 0 : 1) - (b.node.ready ? 0 : 1);
-          break;
-        default:
-          cmp = (a.node.name ?? '').localeCompare(b.node.name ?? '');
-      }
+      const cmp =
+        key === 'cluster'
+          ? getClusterDisplayName(a.cluster).localeCompare(getClusterDisplayName(b.cluster))
+          : key === 'status'
+            ? (a.node.ready ? 0 : 1) - (b.node.ready ? 0 : 1)
+            : (a.node.name ?? '').localeCompare(b.node.name ?? '');
       return dir === 'desc' ? -cmp : cmp;
     });
   });
@@ -847,29 +832,23 @@ export const KubernetesClusters: Component<KubernetesClustersProps> = (props) =>
 
     // Sort
     return filtered.sort((a, b) => {
-      let cmp = 0;
-      switch (key) {
-        case 'name':
-          cmp = (a.pod.name ?? '').localeCompare(b.pod.name ?? '');
-          break;
-        case 'namespace':
-          cmp = (a.pod.namespace ?? '').localeCompare(b.pod.namespace ?? '');
-          break;
-        case 'cluster':
-          cmp = getClusterDisplayName(a.cluster).localeCompare(getClusterDisplayName(b.cluster));
-          break;
-        case 'restarts':
-          cmp = (a.pod.restarts ?? 0) - (b.pod.restarts ?? 0);
-          break;
-        case 'age':
-          cmp = (a.pod.createdAt ?? 0) - (b.pod.createdAt ?? 0);
-          break;
-        case 'status':
-          cmp = (isPodHealthy(a.pod) ? 0 : 1) - (isPodHealthy(b.pod) ? 0 : 1);
-          break;
-        default:
-          cmp = (a.pod.name ?? '').localeCompare(b.pod.name ?? '');
-      }
+      const cmp = (() => {
+        switch (key) {
+          case 'namespace':
+            return (a.pod.namespace ?? '').localeCompare(b.pod.namespace ?? '');
+          case 'cluster':
+            return getClusterDisplayName(a.cluster).localeCompare(getClusterDisplayName(b.cluster));
+          case 'restarts':
+            return (a.pod.restarts ?? 0) - (b.pod.restarts ?? 0);
+          case 'age':
+            return (a.pod.createdAt ?? 0) - (b.pod.createdAt ?? 0);
+          case 'status':
+            return (isPodHealthy(a.pod) ? 0 : 1) - (isPodHealthy(b.pod) ? 0 : 1);
+          case 'name':
+          default:
+            return (a.pod.name ?? '').localeCompare(b.pod.name ?? '');
+        }
+      })();
       return dir === 'desc' ? -cmp : cmp;
     });
   });
@@ -900,31 +879,26 @@ export const KubernetesClusters: Component<KubernetesClustersProps> = (props) =>
 
     // Sort
     return filtered.sort((a, b) => {
-      let cmp = 0;
-      switch (key) {
-        case 'name':
-          cmp = (a.deployment.name ?? '').localeCompare(b.deployment.name ?? '');
-          break;
-        case 'namespace':
-          cmp = (a.deployment.namespace ?? '').localeCompare(b.deployment.namespace ?? '');
-          break;
-        case 'cluster':
-          cmp = getClusterDisplayName(a.cluster).localeCompare(getClusterDisplayName(b.cluster));
-          break;
-        case 'replicas':
-          cmp = (a.deployment.desiredReplicas ?? 0) - (b.deployment.desiredReplicas ?? 0);
-          break;
-        case 'ready':
-          cmp = (a.deployment.readyReplicas ?? 0) - (b.deployment.readyReplicas ?? 0);
-          break;
-        case 'status':
-          cmp =
-            (isDeploymentHealthy(a.deployment) ? 0 : 1) -
-            (isDeploymentHealthy(b.deployment) ? 0 : 1);
-          break;
-        default:
-          cmp = (a.deployment.name ?? '').localeCompare(b.deployment.name ?? '');
-      }
+      const cmp = (() => {
+        switch (key) {
+          case 'namespace':
+            return (a.deployment.namespace ?? '').localeCompare(b.deployment.namespace ?? '');
+          case 'cluster':
+            return getClusterDisplayName(a.cluster).localeCompare(getClusterDisplayName(b.cluster));
+          case 'replicas':
+            return (a.deployment.desiredReplicas ?? 0) - (b.deployment.desiredReplicas ?? 0);
+          case 'ready':
+            return (a.deployment.readyReplicas ?? 0) - (b.deployment.readyReplicas ?? 0);
+          case 'status':
+            return (
+              (isDeploymentHealthy(a.deployment) ? 0 : 1) -
+              (isDeploymentHealthy(b.deployment) ? 0 : 1)
+            );
+          case 'name':
+          default:
+            return (a.deployment.name ?? '').localeCompare(b.deployment.name ?? '');
+        }
+      })();
       return dir === 'desc' ? -cmp : cmp;
     });
   });
