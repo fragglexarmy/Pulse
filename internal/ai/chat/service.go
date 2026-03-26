@@ -261,6 +261,19 @@ func (s *Service) IsRunning() bool {
 	return s.started
 }
 
+func modelForUseCase(cfg *config.AIConfig, useCase string) string {
+	if cfg == nil {
+		return ""
+	}
+
+	switch strings.TrimSpace(useCase) {
+	case "patrol":
+		return strings.TrimSpace(cfg.GetPatrolModel())
+	default:
+		return strings.TrimSpace(cfg.GetChatModel())
+	}
+}
+
 // ExecuteStream sends a prompt and streams the response
 func (s *Service) ExecuteStream(ctx context.Context, req ExecuteRequest, callback StreamCallback) error {
 	log.Debug().
@@ -319,6 +332,7 @@ func (s *Service) ExecuteStream(ctx context.Context, req ExecuteRequest, callbac
 	// Determine which model/loop to use for this request.
 	selectedModel := ""
 	configuredModel := ""
+	serviceModel := ""
 	overrideModel := strings.TrimSpace(req.Model)
 	var executor *tools.PulseToolExecutor
 	autonomousMode := false
@@ -326,7 +340,8 @@ func (s *Service) ExecuteStream(ctx context.Context, req ExecuteRequest, callbac
 	executor = s.executor
 	autonomousMode = s.autonomousMode
 	if s.cfg != nil {
-		configuredModel = strings.TrimSpace(s.cfg.GetChatModel())
+		configuredModel = modelForUseCase(s.cfg, req.UseCase)
+		serviceModel = strings.TrimSpace(s.cfg.GetChatModel())
 	}
 	s.mu.RUnlock()
 
@@ -344,10 +359,10 @@ func (s *Service) ExecuteStream(ctx context.Context, req ExecuteRequest, callbac
 	// ExecuteStream calls would overwrite each other's FSM, knowledge accumulator,
 	// autonomous mode, budget checker, and provider info on a shared loop.
 	var loop *AgenticLoop
-	if overrideModel != "" && overrideModel != configuredModel {
-		provider, err := s.createProviderForModel(overrideModel)
+	if selectedModel != "" && selectedModel != serviceModel {
+		provider, err := s.createProviderForModel(selectedModel)
 		if err != nil {
-			return fmt.Errorf("failed to create provider for model override %q: %w", overrideModel, err)
+			return fmt.Errorf("failed to create provider for model %q: %w", selectedModel, err)
 		}
 		systemPrompt := s.buildSystemPrompt()
 		loop = NewAgenticLoop(provider, executor, systemPrompt)

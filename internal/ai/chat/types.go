@@ -70,6 +70,7 @@ type ExecuteRequest struct {
 	Prompt         string              `json:"prompt"`
 	SessionID      string              `json:"session_id,omitempty"`
 	Model          string              `json:"model,omitempty"`
+	UseCase        string              `json:"use_case,omitempty"` // "chat" or "patrol" - selects the default model when no override is provided
 	Mentions       []StructuredMention `json:"mentions,omitempty"`
 	FindingID      string              `json:"finding_id,omitempty"`      // Pre-populate finding context for "Discuss" flow
 	MaxTurns       int                 `json:"max_turns,omitempty"`       // Override max agentic turns (0 = use default)

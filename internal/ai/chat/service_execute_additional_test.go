@@ -144,3 +144,46 @@ func TestService_ExecuteStream_PrefetchMentionsAndOverrideModel(t *testing.T) {
 		t.Fatal("expected explicit access to be recorded for structured mention")
 	}
 }
+
+func TestService_ExecuteStream_UsesPatrolModelForPatrolUseCase(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := NewSessionStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create session store: %v", err)
+	}
+
+	executor := tools.NewPulseToolExecutor(tools.ExecutorConfig{})
+	provider := &stubServiceProvider{}
+	loop := NewAgenticLoop(provider, executor, "system")
+
+	var capturedModel string
+	svc := &Service{
+		cfg: &config.AIConfig{
+			ChatModel:   "openai:chat-model",
+			PatrolModel: "gemini:patrol-model",
+		},
+		sessions:    store,
+		executor:    executor,
+		agenticLoop: loop,
+		provider:    provider,
+		started:     true,
+		providerFactory: func(modelStr string) (providers.StreamingProvider, error) {
+			capturedModel = modelStr
+			return provider, nil
+		},
+	}
+
+	req := ExecuteRequest{
+		SessionID: "sess-patrol",
+		Prompt:    "investigate finding",
+		UseCase:   "patrol",
+		MaxTurns:  1,
+	}
+
+	if err := svc.ExecuteStream(context.Background(), req, func(StreamEvent) {}); err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+	if capturedModel != "gemini:patrol-model" {
+		t.Fatalf("expected patrol model to be used for patrol use case, got %q", capturedModel)
+	}
+}

@@ -48,6 +48,7 @@ func (a *ChatServiceAdapter) ExecuteStream(ctx context.Context, req ExecuteReque
 	chatReq := chat.ExecuteRequest{
 		Prompt:         req.Prompt,
 		SessionID:      req.SessionID,
+		UseCase:        req.UseCase,
 		MaxTurns:       req.MaxTurns,
 		AutonomousMode: req.AutonomousMode,
 	}

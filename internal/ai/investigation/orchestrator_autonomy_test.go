@@ -49,6 +49,7 @@ func TestInvestigateFinding_AutonomousMode_Full(t *testing.T) {
 
 	// Autonomous mode should be passed via the request, not via SetAutonomousMode
 	require.Len(t, chat.capturedRequests, 1)
+	assert.Equal(t, "patrol", chat.capturedRequests[0].UseCase, "patrol investigations should route through the patrol model")
 	require.NotNil(t, chat.capturedRequests[0].AutonomousMode)
 	assert.True(t, *chat.capturedRequests[0].AutonomousMode, "full autonomy should set autonomous mode to true in request")
 
@@ -66,6 +67,7 @@ func TestInvestigateFinding_AutonomousMode_Approval(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, chat.capturedRequests, 1)
+	assert.Equal(t, "patrol", chat.capturedRequests[0].UseCase)
 	require.NotNil(t, chat.capturedRequests[0].AutonomousMode)
 	assert.False(t, *chat.capturedRequests[0].AutonomousMode, "approval mode should set autonomous mode to false in request")
 	assert.Empty(t, chat.autonomousCalls)
@@ -81,6 +83,7 @@ func TestInvestigateFinding_AutonomousMode_Assisted(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, chat.capturedRequests, 1)
+	assert.Equal(t, "patrol", chat.capturedRequests[0].UseCase)
 	require.NotNil(t, chat.capturedRequests[0].AutonomousMode)
 	assert.False(t, *chat.capturedRequests[0].AutonomousMode, "assisted mode should set autonomous mode to false in request")
 	assert.Empty(t, chat.autonomousCalls)
@@ -96,6 +99,7 @@ func TestInvestigateFinding_AutonomousMode_Monitor(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, chat.capturedRequests, 1)
+	assert.Equal(t, "patrol", chat.capturedRequests[0].UseCase)
 	require.NotNil(t, chat.capturedRequests[0].AutonomousMode)
 	assert.False(t, *chat.capturedRequests[0].AutonomousMode, "monitor mode should set autonomous mode to false in request")
 	assert.Empty(t, chat.autonomousCalls)
@@ -111,6 +115,7 @@ func TestInvestigateFinding_AutonomousMode_Empty(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, chat.capturedRequests, 1)
+	assert.Equal(t, "patrol", chat.capturedRequests[0].UseCase)
 	require.NotNil(t, chat.capturedRequests[0].AutonomousMode)
 	assert.False(t, *chat.capturedRequests[0].AutonomousMode, "empty autonomy level should set autonomous mode to false in request")
 	assert.Empty(t, chat.autonomousCalls)

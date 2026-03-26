@@ -45,6 +45,7 @@ type Session struct {
 type ExecuteRequest struct {
 	Prompt         string `json:"prompt"`
 	SessionID      string `json:"session_id,omitempty"`
+	UseCase        string `json:"use_case,omitempty"`
 	MaxTurns       int    `json:"max_turns,omitempty"`       // Override max agentic turns (0 = use default)
 	AutonomousMode *bool  `json:"autonomous_mode,omitempty"` // Per-request autonomous override (nil = use service default)
 }
@@ -551,6 +552,7 @@ func (o *Orchestrator) executeWithLimits(ctx context.Context, investigation *Inv
 	req := ExecuteRequest{
 		Prompt:         prompt,
 		SessionID:      investigation.SessionID,
+		UseCase:        "patrol",
 		MaxTurns:       maxTurns,
 		AutonomousMode: &autonomousMode,
 	}

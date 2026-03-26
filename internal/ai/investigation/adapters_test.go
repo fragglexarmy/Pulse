@@ -254,3 +254,48 @@ func TestChatServiceAdapter_BasicFlow(t *testing.T) {
 		t.Fatalf("expected error when service not running")
 	}
 }
+
+func TestChatServiceAdapter_UsesPatrolRouteForPatrolUseCase(t *testing.T) {
+	dataDir := t.TempDir()
+	service := chat.NewService(chat.Config{
+		AIConfig: &config.AIConfig{
+			Enabled:     true,
+			ChatModel:   "openai:chat-model",
+			PatrolModel: "gemini:patrol-model",
+		},
+		DataDir: dataDir,
+	})
+
+	sessions, err := chat.NewSessionStore(dataDir)
+	if err != nil {
+		t.Fatalf("failed to create session store: %v", err)
+	}
+
+	executor := tools.NewPulseToolExecutor(tools.ExecutorConfig{})
+	provider := &stubStreamingProvider{}
+	agentic := chat.NewAgenticLoop(provider, executor, "system")
+	var capturedModel string
+
+	setServiceField(t, service, "sessions", sessions)
+	setServiceField(t, service, "agenticLoop", agentic)
+	setServiceField(t, service, "executor", executor)
+	setServiceField(t, service, "provider", provider)
+	setServiceField(t, service, "providerFactory", func(modelStr string) (providers.StreamingProvider, error) {
+		capturedModel = modelStr
+		return provider, nil
+	})
+	setServiceField(t, service, "started", true)
+
+	adapter := NewChatServiceAdapter(service)
+	err = adapter.ExecuteStream(context.Background(), ExecuteRequest{
+		Prompt:    "investigate",
+		SessionID: "inv-1",
+		UseCase:   "patrol",
+	}, func(StreamEvent) {})
+	if err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if capturedModel != "gemini:patrol-model" {
+		t.Fatalf("expected patrol model through adapter, got %q", capturedModel)
+	}
+}
