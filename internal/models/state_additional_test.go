@@ -186,6 +186,71 @@ func TestStateLinkHostAgentToNode(t *testing.T) {
 	}
 }
 
+func TestStateUpdateNodesForInstanceBackfillsHostLinkedNodeID(t *testing.T) {
+	state := &State{
+		Hosts: []Host{
+			{ID: "host-1", Hostname: "pve01.local"},
+		},
+	}
+
+	state.UpdateNodesForInstance("cluster-a", []Node{
+		{ID: "node-1", Instance: "cluster-a", Name: "pve01"},
+	})
+
+	if len(state.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(state.Nodes))
+	}
+	if state.Nodes[0].LinkedHostAgentID != "host-1" {
+		t.Fatalf("LinkedHostAgentID = %q, want host-1", state.Nodes[0].LinkedHostAgentID)
+	}
+	if state.Hosts[0].LinkedNodeID != "node-1" {
+		t.Fatalf("LinkedNodeID = %q, want node-1", state.Hosts[0].LinkedNodeID)
+	}
+}
+
+func TestStateUpdateNodesForInstanceRepairsStaleHostLinkedNodeID(t *testing.T) {
+	state := &State{
+		Hosts: []Host{
+			{ID: "host-1", Hostname: "pve01.local", LinkedNodeID: "node-old"},
+		},
+		Nodes: []Node{
+			{ID: "node-old", Instance: "cluster-a", Name: "pve01", LinkedHostAgentID: "host-1"},
+		},
+	}
+
+	state.UpdateNodesForInstance("cluster-a", []Node{
+		{ID: "node-new", Instance: "cluster-a", Name: "pve01"},
+	})
+
+	if len(state.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(state.Nodes))
+	}
+	if state.Nodes[0].LinkedHostAgentID != "host-1" {
+		t.Fatalf("LinkedHostAgentID = %q, want host-1", state.Nodes[0].LinkedHostAgentID)
+	}
+	if state.Hosts[0].LinkedNodeID != "node-new" {
+		t.Fatalf("LinkedNodeID = %q, want node-new", state.Hosts[0].LinkedNodeID)
+	}
+}
+
+func TestStateUpdateNodesForInstanceDoesNotBackfillAmbiguousHostLink(t *testing.T) {
+	state := &State{
+		Hosts: []Host{
+			{ID: "host-1", Hostname: "pve01.local"},
+		},
+		Nodes: []Node{
+			{ID: "node-1", Instance: "cluster-a", Name: "pve01", LinkedHostAgentID: "host-1"},
+			{ID: "node-2", Instance: "cluster-b", Name: "pve01", LinkedHostAgentID: "host-1"},
+		},
+	}
+
+	state.UpdateNodesForInstance("cluster-c", nil)
+
+	if state.Hosts[0].LinkedNodeID != "" {
+		t.Fatalf("LinkedNodeID = %q, want empty", state.Hosts[0].LinkedNodeID)
+	}
+}
+
 func TestStateSnapshotPreservesEmptyTemplateInventoryReadiness(t *testing.T) {
 	state := &State{}
 

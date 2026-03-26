@@ -1534,7 +1534,67 @@ func (s *State) UpdateNodesForInstance(instanceName string, nodes []Node) {
 	})
 
 	s.Nodes = newNodes
+	s.reconcileHostNodeLinksLocked()
 	s.LastUpdate = time.Now()
+}
+
+// reconcileHostNodeLinksLocked backfills host-side LinkedNodeID values from the
+// authoritative node-side LinkedHostAgentID links after node refreshes. This is
+// especially important after reloads/auto-registration, where nodes are rebuilt
+// from config and can recover their linked host agent by hostname before the host
+// agent has sent another report.
+func (s *State) reconcileHostNodeLinksLocked() {
+	if len(s.Hosts) == 0 || len(s.Nodes) == 0 {
+		return
+	}
+
+	validNodeIDs := make(map[string]struct{}, len(s.Nodes))
+	uniqueNodeForHost := make(map[string]string)
+	ambiguousHosts := make(map[string]struct{})
+	for _, node := range s.Nodes {
+		nodeID := strings.TrimSpace(node.ID)
+		if nodeID == "" {
+			continue
+		}
+		validNodeIDs[nodeID] = struct{}{}
+
+		hostID := strings.TrimSpace(node.LinkedHostAgentID)
+		if hostID == "" {
+			continue
+		}
+		if _, ambiguous := ambiguousHosts[hostID]; ambiguous {
+			continue
+		}
+		if existingNodeID, ok := uniqueNodeForHost[hostID]; ok && existingNodeID != nodeID {
+			delete(uniqueNodeForHost, hostID)
+			ambiguousHosts[hostID] = struct{}{}
+			continue
+		}
+		uniqueNodeForHost[hostID] = nodeID
+	}
+
+	for i := range s.Hosts {
+		currentNodeID := strings.TrimSpace(s.Hosts[i].LinkedNodeID)
+		candidateNodeID, hasCandidate := uniqueNodeForHost[s.Hosts[i].ID]
+
+		switch {
+		case currentNodeID != "":
+			if _, ok := validNodeIDs[currentNodeID]; !ok {
+				if hasCandidate {
+					s.Hosts[i].LinkedNodeID = candidateNodeID
+				} else {
+					s.Hosts[i].LinkedNodeID = ""
+				}
+			}
+		case hasCandidate:
+			s.Hosts[i].LinkedNodeID = candidateNodeID
+		}
+
+		if s.Hosts[i].LinkedNodeID != "" {
+			s.Hosts[i].LinkedVMID = ""
+			s.Hosts[i].LinkedContainerID = ""
+		}
+	}
 }
 
 // UpdateVMs updates the VMs in the state
