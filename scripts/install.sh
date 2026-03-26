@@ -166,6 +166,11 @@ DISK_EXCLUDES=()  # Array for multiple --disk-exclude values
 CUSTOM_ENVS=()    # Array for --env KEY=VALUE pairs
 CURL_CA_BUNDLE="" # Path to CA bundle for curl and agent TLS (sets SSL_CERT_FILE)
 
+ROOTLESS_RUNTIME_KIND=""
+ROOTLESS_RUNTIME_SOCKET_PATH=""
+ROOTLESS_RUNTIME_SOCKET_URI=""
+ROOTLESS_RUNTIME_XDG_DIR=""
+
 # Track if flags were explicitly set (to override auto-detection)
 DOCKER_EXPLICIT="false"
 KUBERNETES_EXPLICIT="false"
@@ -250,24 +255,91 @@ restore_selinux_contexts() {
 
 # --- Auto-Detection Functions ---
 detect_docker() {
-    # Check if Docker is available and accessible
-    if command -v docker &>/dev/null; then
-        # Try to connect to Docker daemon
-        if docker info &>/dev/null 2>&1; then
-            return 0
-        else
-            log_warn "Docker binary found ($(command -v docker)) but 'docker info' failed. Is the daemon running?"
-        fi
-    fi
-    # Also check for Podman (Docker-compatible)
-    if command -v podman &>/dev/null; then
-        if podman info &>/dev/null 2>&1; then
-            return 0
-        else
-            log_warn "Podman binary found but 'podman info' failed."
-        fi
-    fi
-    return 1
+	# Check if Docker is available and accessible
+	if command -v docker &>/dev/null; then
+		# Try to connect to Docker daemon
+		if docker info &>/dev/null 2>&1; then
+			return 0
+		else
+			log_warn "Docker binary found ($(command -v docker)) but 'docker info' failed. Is the daemon running?"
+		fi
+	fi
+	# Also check for Podman (Docker-compatible)
+	if command -v podman &>/dev/null; then
+		if podman info &>/dev/null 2>&1; then
+			return 0
+		else
+			log_warn "Podman binary found but 'podman info' failed."
+		fi
+	fi
+	if discover_rootless_container_runtime; then
+		return 0
+	fi
+	return 1
+}
+
+discover_single_socket_match() {
+	local pattern="$1"
+	local matches=()
+	local candidate=""
+
+	for candidate in $pattern; do
+		[[ -S "$candidate" ]] || continue
+		matches+=("$candidate")
+	done
+
+	case "${#matches[@]}" in
+	0)
+		return 1
+		;;
+	1)
+		printf '%s\n' "${matches[0]}"
+		return 0
+		;;
+	*)
+		printf '%s\n' "__AMBIGUOUS__"
+		return 0
+		;;
+	esac
+}
+
+discover_rootless_container_runtime() {
+	local docker_match=""
+	local podman_match=""
+
+	ROOTLESS_RUNTIME_KIND=""
+	ROOTLESS_RUNTIME_SOCKET_PATH=""
+	ROOTLESS_RUNTIME_SOCKET_URI=""
+	ROOTLESS_RUNTIME_XDG_DIR=""
+
+	if [[ "$(uname -s)" != "Linux" ]]; then
+		return 1
+	fi
+
+	docker_match=$(discover_single_socket_match "/run/user/*/docker.sock" || true)
+	podman_match=$(discover_single_socket_match "/run/user/*/podman/podman.sock" || true)
+
+	if [[ "$docker_match" == "__AMBIGUOUS__" ]]; then
+		log_warn "Multiple rootless Docker sockets found under /run/user; not auto-selecting one. Use --env DOCKER_HOST=unix:///run/user/<uid>/docker.sock if needed."
+	elif [[ -n "$docker_match" ]]; then
+		ROOTLESS_RUNTIME_KIND="docker"
+		ROOTLESS_RUNTIME_SOCKET_PATH="$docker_match"
+		ROOTLESS_RUNTIME_SOCKET_URI="unix://${docker_match}"
+		ROOTLESS_RUNTIME_XDG_DIR="$(dirname "$docker_match")"
+		return 0
+	fi
+
+	if [[ "$podman_match" == "__AMBIGUOUS__" ]]; then
+		log_warn "Multiple rootless Podman sockets found under /run/user; not auto-selecting one. Use --env CONTAINER_HOST=unix:///run/user/<uid>/podman/podman.sock if needed."
+	elif [[ -n "$podman_match" ]]; then
+		ROOTLESS_RUNTIME_KIND="podman"
+		ROOTLESS_RUNTIME_SOCKET_PATH="$podman_match"
+		ROOTLESS_RUNTIME_SOCKET_URI="unix://${podman_match}"
+		ROOTLESS_RUNTIME_XDG_DIR="${podman_match%/podman/podman.sock}"
+		return 0
+	fi
+
+	return 1
 }
 
 detect_kubernetes() {
@@ -493,51 +565,68 @@ done
 
 # --- Build Combined Environment Strings ---
 # Pre-compute environment variable strings for all service file formats.
-# Includes SSL_CERT_FILE (from --cacert) and custom vars (from --env).
+# Includes SSL_CERT_FILE (from --cacert), custom vars (from --env), and any
+# installer-detected runtime overrides such as rootless container sockets.
 SYSTEMD_ENV_LINES=""
 SHELL_EXPORT_LINES=""
 PLIST_ENV_ENTRIES=""
+PLIST_ENV_BLOCK=""
+SED_EXPORT_LINES=""
+APPLIED_SERVICE_ENV_KEYS="|"
 
-if [[ -n "$SSL_CERT_ENV_NAME" ]]; then
-    SYSTEMD_ENV_LINES+=$'\n'"Environment=\"${SSL_CERT_ENV_NAME}=${SSL_CERT_ENV_VALUE}\""
-    SHELL_EXPORT_LINES+=$'\n'"export ${SSL_CERT_ENV_NAME}='${SSL_CERT_ENV_VALUE}'"
-    PLIST_ENV_ENTRIES+="
-        <key>${SSL_CERT_ENV_NAME}</key>
-        <string>${SSL_CERT_ENV_VALUE}</string>"
-fi
-for env_pair in ${CUSTOM_ENVS[@]+"${CUSTOM_ENVS[@]}"}; do
-    env_key="${env_pair%%=*}"
-    env_val="${env_pair#*=}"
-    SYSTEMD_ENV_LINES+=$'\n'"Environment=\"${env_key}=${env_val}\""
-    SHELL_EXPORT_LINES+=$'\n'"export ${env_key}='${env_val}'"
-    PLIST_ENV_ENTRIES+="
+service_env_has_key() {
+	local env_key="$1"
+	case "$APPLIED_SERVICE_ENV_KEYS" in
+	*"|${env_key}|"*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+append_service_env() {
+	local env_key="$1"
+	local env_val="$2"
+
+	if [[ -z "$env_key" ]]; then
+		return
+	fi
+	if service_env_has_key "$env_key"; then
+		return
+	fi
+
+	SYSTEMD_ENV_LINES+=$'\n'"Environment=\"${env_key}=${env_val}\""
+	SHELL_EXPORT_LINES+=$'\n'"export ${env_key}='${env_val}'"
+	PLIST_ENV_ENTRIES+="
         <key>${env_key}</key>
         <string>${env_val}</string>"
-    log_info "Custom environment: ${env_key}=${env_val}"
-done
+	if [[ -n "$SED_EXPORT_LINES" ]]; then
+		SED_EXPORT_LINES+=$'\n'"    "
+	fi
+	SED_EXPORT_LINES+="export ${env_key}='${env_val}'"
+	APPLIED_SERVICE_ENV_KEYS+="${env_key}|"
+}
 
-# Wrap plist entries in EnvironmentVariables dict if any exist
-PLIST_ENV_BLOCK=""
-if [[ -n "$PLIST_ENV_ENTRIES" ]]; then
-    PLIST_ENV_BLOCK="
+finalize_plist_env_block() {
+	PLIST_ENV_BLOCK=""
+	if [[ -n "$PLIST_ENV_ENTRIES" ]]; then
+		PLIST_ENV_BLOCK="
     <key>EnvironmentVariables</key>
     <dict>${PLIST_ENV_ENTRIES}
     </dict>"
-fi
+	fi
+}
 
-# SED_EXPORT_LINES: for sed placeholder replacement in rc.d/init.d templates.
-# No leading newline; each export on its own line.
-SED_EXPORT_LINES=""
 if [[ -n "$SSL_CERT_ENV_NAME" ]]; then
-    SED_EXPORT_LINES+="export ${SSL_CERT_ENV_NAME}='${SSL_CERT_ENV_VALUE}'"
+	append_service_env "$SSL_CERT_ENV_NAME" "$SSL_CERT_ENV_VALUE"
 fi
 for env_pair in ${CUSTOM_ENVS[@]+"${CUSTOM_ENVS[@]}"}; do
-    env_key="${env_pair%%=*}"
-    env_val="${env_pair#*=}"
-    if [[ -n "$SED_EXPORT_LINES" ]]; then
-        SED_EXPORT_LINES+=$'\n'"    "
-    fi
-    SED_EXPORT_LINES+="export ${env_key}='${env_val}'"
+	env_key="${env_pair%%=*}"
+	env_val="${env_pair#*=}"
+	append_service_env "$env_key" "$env_val"
+	log_info "Custom environment: ${env_key}=${env_val}"
 done
 
 # --- Platform Auto-Detection ---
@@ -580,6 +669,30 @@ log_info "  Host metrics: $ENABLE_HOST"
 log_info "  Docker/Podman: $ENABLE_DOCKER"
 log_info "  Kubernetes: $ENABLE_KUBERNETES"
 log_info "  Proxmox: $ENABLE_PROXMOX"
+
+if [[ "$ENABLE_DOCKER" == "true" ]] && discover_rootless_container_runtime; then
+	if [[ "$ROOTLESS_RUNTIME_KIND" == "docker" ]]; then
+		if ! service_env_has_key "DOCKER_HOST"; then
+			append_service_env "DOCKER_HOST" "$ROOTLESS_RUNTIME_SOCKET_URI"
+			if ! service_env_has_key "XDG_RUNTIME_DIR"; then
+				append_service_env "XDG_RUNTIME_DIR" "$ROOTLESS_RUNTIME_XDG_DIR"
+			fi
+			log_info "Using rootless Docker socket for agent service: ${ROOTLESS_RUNTIME_SOCKET_PATH}"
+		fi
+	elif [[ "$ROOTLESS_RUNTIME_KIND" == "podman" ]]; then
+		if ! service_env_has_key "CONTAINER_HOST" && ! service_env_has_key "PODMAN_HOST"; then
+			append_service_env "PULSE_DOCKER_RUNTIME" "podman"
+			append_service_env "CONTAINER_HOST" "$ROOTLESS_RUNTIME_SOCKET_URI"
+			append_service_env "PODMAN_HOST" "$ROOTLESS_RUNTIME_SOCKET_URI"
+			if ! service_env_has_key "XDG_RUNTIME_DIR"; then
+				append_service_env "XDG_RUNTIME_DIR" "$ROOTLESS_RUNTIME_XDG_DIR"
+			fi
+			log_info "Using rootless Podman socket for agent service: ${ROOTLESS_RUNTIME_SOCKET_PATH}"
+		fi
+	fi
+fi
+
+finalize_plist_env_block()
 
 # --- Uninstall Logic ---
 if [[ "$UNINSTALL" == "true" ]]; then
