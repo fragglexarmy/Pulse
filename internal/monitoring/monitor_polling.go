@@ -249,6 +249,38 @@ func matchZFSPoolForStorage(storage models.Storage, zfsPoolMap map[string]*model
 	return nil
 }
 
+type indexedLegacyVM struct {
+	order int
+	vm    proxmox.VM
+}
+
+type orderedNodeVMResult struct {
+	order   int
+	vm      models.VM
+	alertVM models.VM
+	snap    GuestMemorySnapshot
+}
+
+func rotateIndexedLegacyVMs(vms []indexedLegacyVM, offset int) []indexedLegacyVM {
+	count := len(vms)
+	if count <= 1 {
+		return append([]indexedLegacyVM(nil), vms...)
+	}
+
+	offset %= count
+	if offset < 0 {
+		offset += count
+	}
+	if offset == 0 {
+		return append([]indexedLegacyVM(nil), vms...)
+	}
+
+	rotated := make([]indexedLegacyVM, 0, count)
+	rotated = append(rotated, vms[offset:]...)
+	rotated = append(rotated, vms[:offset]...)
+	return rotated
+}
+
 // pollVMsWithNodes polls VMs from all nodes in parallel using goroutines
 // When the instance is part of a cluster, the cluster name is used for guest IDs to prevent duplicates
 // when multiple cluster nodes are configured as separate PVE instances.
@@ -325,16 +357,27 @@ func (m *Monitor) pollVMsWithNodes(ctx context.Context, instanceName string, clu
 				return
 			}
 
-			var nodeVMs []models.VM
-			var nodeAlertVMs []models.VM
-			var nodeSnapshots []GuestMemorySnapshot
-
-			// Process each VM
-			for _, vm := range vms {
-				// Skip templates
+			indexedVMs := make([]indexedLegacyVM, 0, len(vms))
+			for idx, vm := range vms {
 				if vm.Template == 1 {
 					continue
 				}
+				indexedVMs = append(indexedVMs, indexedLegacyVM{
+					order: idx,
+					vm:    vm,
+				})
+			}
+			scheduledVMs := rotateIndexedLegacyVMs(
+				indexedVMs,
+				m.nextGuestAgentPollOffset(instanceName+":"+n.Node, len(indexedVMs)),
+			)
+			nodeResults := make([]orderedNodeVMResult, 0, len(scheduledVMs))
+
+			// Process each VM while rotating guest-agent priority across polls.
+			// This keeps the same higher-VMID guests from always falling to the
+			// back of the queue under timeouts or bounded guest-agent work slots.
+			for _, indexedVM := range scheduledVMs {
+				vm := indexedVM.vm
 
 				// Parse tags
 				var tags []string
@@ -980,16 +1023,31 @@ func (m *Monitor) pollVMsWithNodes(ctx context.Context, instanceName string, clu
 					m.guestMetadataStore.GetWithLegacyMigration(guestID, instanceName, n.Node, vm.VMID)
 				}
 
-				nodeVMs = append(nodeVMs, modelVM)
-				nodeAlertVMs = append(nodeAlertVMs, modelVM)
-				nodeSnapshots = append(nodeSnapshots, GuestMemorySnapshot{
-					Name:         vm.Name,
-					Status:       vm.Status,
-					RetrievedAt:  sampleTime,
-					MemorySource: memorySource,
-					Memory:       modelVM.Memory,
-					Raw:          guestRaw,
+				nodeResults = append(nodeResults, orderedNodeVMResult{
+					order:   indexedVM.order,
+					vm:      modelVM,
+					alertVM: modelVM,
+					snap: GuestMemorySnapshot{
+						Name:         vm.Name,
+						Status:       vm.Status,
+						RetrievedAt:  sampleTime,
+						MemorySource: memorySource,
+						Memory:       modelVM.Memory,
+						Raw:          guestRaw,
+					},
 				})
+			}
+
+			sort.Slice(nodeResults, func(i, j int) bool {
+				return nodeResults[i].order < nodeResults[j].order
+			})
+			nodeVMs := make([]models.VM, 0, len(nodeResults))
+			nodeAlertVMs := make([]models.VM, 0, len(nodeResults))
+			nodeSnapshots := make([]GuestMemorySnapshot, 0, len(nodeResults))
+			for _, result := range nodeResults {
+				nodeVMs = append(nodeVMs, result.vm)
+				nodeAlertVMs = append(nodeAlertVMs, result.alertVM)
+				nodeSnapshots = append(nodeSnapshots, result.snap)
 			}
 
 			nodeDuration := time.Since(nodeStart)

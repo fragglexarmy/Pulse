@@ -336,6 +336,13 @@ type mockPVEClientExtra struct {
 	vmRRDPoints []proxmox.GuestRRDPoint
 }
 
+type rotatingLegacyGuestAgentClient struct {
+	mockPVEClientExtra
+	fsDelay       time.Duration
+	fsInfoCalls   []int
+	fsInfoCallsMu sync.Mutex
+}
+
 func (m *mockPVEClientExtra) GetClusterResources(ctx context.Context, resourceType string) ([]proxmox.ClusterResource, error) {
 	return m.resources, nil
 }
@@ -349,6 +356,35 @@ func (m *mockPVEClientExtra) GetVMStatus(ctx context.Context, node string, vmid 
 
 func (m *mockPVEClientExtra) GetVMFSInfo(ctx context.Context, node string, vmid int) ([]proxmox.VMFileSystem, error) {
 	return m.fsInfo, nil
+}
+
+func (m *rotatingLegacyGuestAgentClient) GetVMFSInfo(ctx context.Context, node string, vmid int) ([]proxmox.VMFileSystem, error) {
+	m.fsInfoCallsMu.Lock()
+	m.fsInfoCalls = append(m.fsInfoCalls, vmid)
+	m.fsInfoCallsMu.Unlock()
+
+	select {
+	case <-time.After(m.fsDelay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	return []proxmox.VMFileSystem{{
+		Mountpoint: "/",
+		Type:       "ext4",
+		TotalBytes: 100 * 1024 * 1024 * 1024,
+		UsedBytes:  40 * 1024 * 1024 * 1024,
+		Disk:       "/dev/vda",
+	}}, nil
+}
+
+func (m *rotatingLegacyGuestAgentClient) takeFSInfoCalls() []int {
+	m.fsInfoCallsMu.Lock()
+	defer m.fsInfoCallsMu.Unlock()
+
+	calls := append([]int(nil), m.fsInfoCalls...)
+	m.fsInfoCalls = nil
+	return calls
 }
 
 func (m *mockPVEClientExtra) GetVMNetworkInterfaces(ctx context.Context, node string, vmid int) ([]proxmox.VMNetworkInterface, error) {
@@ -893,6 +929,84 @@ func TestPollVMsWithNodes_UsesLinkedHostAgentDiskFallback(t *testing.T) {
 	}
 	if len(vm.Disks) != 1 || vm.Disks[0].Device != "/dev/vda" {
 		t.Fatalf("expected linked host-agent disk inventory, got %#v", vm.Disks)
+	}
+}
+
+func TestPollVMsWithNodes_RotatesGuestAgentPriorityAcrossPolls(t *testing.T) {
+	t.Setenv("PULSE_DATA_DIR", t.TempDir())
+
+	m := &Monitor{
+		state:                    models.NewState(),
+		guestAgentFSInfoTimeout:  250 * time.Millisecond,
+		guestAgentRetries:        0,
+		guestAgentNetworkTimeout: 250 * time.Millisecond,
+		guestAgentOSInfoTimeout:  250 * time.Millisecond,
+		guestAgentVersionTimeout: 250 * time.Millisecond,
+		guestMetadataCache:       make(map[string]guestMetadataCacheEntry),
+		guestMetadataLimiter:     make(map[string]time.Time),
+		rateTracker:              NewRateTracker(),
+		metricsHistory:           NewMetricsHistory(100, time.Hour),
+		alertManager:             alerts.NewManager(),
+		stalenessTracker:         NewStalenessTracker(nil),
+		nodeRRDMemCache:          make(map[string]rrdMemCacheEntry),
+		vmRRDMemCache:            make(map[string]rrdMemCacheEntry),
+		vmAgentMemCache:          make(map[string]agentMemCacheEntry),
+		guestAgentWorkSlots:      make(chan struct{}, 1),
+		guestAgentPollCursor:     make(map[string]int),
+	}
+	defer m.alertManager.Stop()
+
+	client := &rotatingLegacyGuestAgentClient{
+		mockPVEClientExtra: mockPVEClientExtra{
+			vms: []proxmox.VM{
+				{VMID: 100, Name: "vm100", Node: "node1", Status: "running", MaxMem: 8 * 1024, Mem: 4 * 1024, MaxDisk: 100 * 1024 * 1024 * 1024},
+				{VMID: 101, Name: "vm101", Node: "node1", Status: "running", MaxMem: 8 * 1024, Mem: 4 * 1024, MaxDisk: 100 * 1024 * 1024 * 1024},
+				{VMID: 102, Name: "vm102", Node: "node1", Status: "running", MaxMem: 8 * 1024, Mem: 4 * 1024, MaxDisk: 100 * 1024 * 1024 * 1024},
+			},
+			vmStatus: &proxmox.VMStatus{
+				Status: "running",
+				Agent:  proxmox.VMAgentField{Value: 1},
+				MaxMem: 8 * 1024,
+				Mem:    4 * 1024,
+			},
+		},
+		fsDelay: 60 * time.Millisecond,
+	}
+
+	checkResolved := func(expectedVMID int) {
+		state := m.GetState()
+		if len(state.VMs) != 3 {
+			t.Fatalf("expected 3 VMs, got %d", len(state.VMs))
+		}
+
+		vmByID := make(map[int]models.VM, len(state.VMs))
+		for _, vm := range state.VMs {
+			vmByID[vm.VMID] = vm
+		}
+
+		if vmByID[expectedVMID].Disk.Usage <= 0 {
+			t.Fatalf("expected VM %d to get a real disk reading, got usage=%.2f reason=%q", expectedVMID, vmByID[expectedVMID].Disk.Usage, vmByID[expectedVMID].DiskStatusReason)
+		}
+	}
+
+	for _, expectedVMID := range []int{100, 101, 102} {
+		ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+		m.pollVMsWithNodes(
+			ctx,
+			"pve1",
+			"",
+			false,
+			client,
+			[]proxmox.Node{{Node: "node1", Status: "online"}},
+			map[string]string{"node1": "online"},
+		)
+		cancel()
+
+		calls := client.takeFSInfoCalls()
+		if len(calls) == 0 || calls[0] != expectedVMID {
+			t.Fatalf("expected VM %d to be first guest-agent disk query, got calls %v", expectedVMID, calls)
+		}
+		checkResolved(expectedVMID)
 	}
 }
 
