@@ -565,6 +565,7 @@ func processGuestNetworkInterfaces(raw []proxmox.VMNetworkInterface) ([]string, 
 	for _, iface := range raw {
 		ifaceName := strings.TrimSpace(iface.Name)
 		mac := strings.TrimSpace(iface.HardwareAddr)
+		hadRawAddresses := len(iface.IPAddresses) > 0
 
 		addrSet := make(map[string]struct{})
 		addresses := make([]string, 0, len(iface.IPAddresses))
@@ -604,12 +605,17 @@ func processGuestNetworkInterfaces(raw []proxmox.VMNetworkInterface) ([]string, 
 		}
 
 		if len(addresses) == 0 && rxBytes == 0 && txBytes == 0 {
-			if len(iface.IPAddresses) > 0 {
+			lowerName := strings.ToLower(ifaceName)
+			if lowerName == "lo" || lowerName == "loopback" {
 				continue
 			}
-			lowerName := strings.ToLower(ifaceName)
-			if ifaceName == "" || lowerName == "lo" || lowerName == "loopback" {
+			if ifaceName == "" && mac == "" {
 				continue
+			}
+			if hadRawAddresses {
+				// Preserve interface identity even when every reported address was filtered
+				// (for example, link-local-only early guest-agent payloads). Proxmox still
+				// considers this a real guest NIC and the UI should not hide it entirely.
 			}
 			// Preserve named non-loopback interfaces even when early/partial guest-agent
 			// payloads have not populated MAC or IP details yet. The interface identity
