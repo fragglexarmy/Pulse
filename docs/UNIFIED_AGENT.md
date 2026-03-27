@@ -54,6 +54,76 @@ curl -fsSL http://<pulse-ip>:7655/install.sh | \
 - **Auto-Update**: Automatically updates when a new version is released
 - **Multi-Platform**: Linux, macOS, Windows support
 
+## Where To Install The Agent
+
+The unified agent is most useful where Pulse cannot already get the same data from an existing platform integration.
+
+### Proxmox hosts
+
+Install the agent directly on Proxmox VE hosts if you want:
+
+- temperatures
+- S.M.A.R.T. disk health
+- RAID status
+- local host metrics when the node itself matters as a machine, not just as a Proxmox API endpoint
+
+This is the highest-value placement for most Proxmox users. The Proxmox API does not expose all of that hardware telemetry on its own.
+
+### LXC containers
+
+Usually skip the agent inside plain LXCs.
+
+Proxmox already has good visibility into LXC CPU, memory, and filesystem usage, so an extra agent inside the container is often redundant. Install the agent inside an LXC only when the workload inside that container is what you actually want to monitor:
+
+- Docker or Podman running inside the LXC
+- Kubernetes components running inside the LXC
+- application-level host metrics from inside that guest OS
+
+If the LXC is just a normal service container and you only care about the LXC itself, the Proxmox integration is usually enough.
+
+### Virtual machines
+
+For VMs, the decision depends on how much visibility you need inside the guest.
+
+- Without `qemu-guest-agent`, Proxmox cannot see inside the VM well enough to report guest disk usage, guest interfaces, or other guest-level details.
+- With `qemu-guest-agent`, Pulse can often collect guest disk and interface data through Proxmox without needing a full Pulse agent inside the VM.
+- Install the Pulse agent inside the VM when you want direct in-guest monitoring, or when the VM itself runs Docker, Podman, or Kubernetes and you want container-level visibility there too.
+
+In short:
+
+- Proxmox host agent: usually yes
+- plain LXC agent: usually no
+- VM agent: install when you need in-guest visibility beyond what Proxmox plus `qemu-guest-agent` can provide
+
+### Docker or Podman hosts
+
+Install the agent on the machine that actually owns the Docker or Podman socket.
+
+That can be:
+
+- a bare-metal host
+- a VM
+- an LXC
+
+The value here is per-container and per-service visibility. If you only monitor the outer VM or LXC and do not care about the individual containers inside it, then installing the agent there may not be worth it.
+
+### Kubernetes nodes
+
+Install the agent where it can reach the Kubernetes API and kubelet/container runtime data you want to monitor.
+
+For most users this means:
+
+- a node-local install when the node itself matters
+- or a dedicated DaemonSet if you want cluster-wide Kubernetes visibility
+
+See [KUBERNETES.md](KUBERNETES.md) for Kubernetes-specific deployment guidance.
+
+### Practical rule of thumb
+
+- Install on Proxmox hosts for hardware and host telemetry.
+- Install inside guests only when you want visibility into what is running inside those guests.
+- Skip duplicate installs where Pulse already has equivalent visibility from Proxmox alone.
+
 ## Configuration
 
 ### Installer flags (`install.sh`)

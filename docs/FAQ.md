@@ -27,6 +27,16 @@ Go to **Settings → Proxmox**.
 
 If you want Pulse to find servers automatically, enable discovery in **Settings → System → Network** and then return to **Settings → Proxmox** to review discovered servers.
 
+### Where should I actually install the unified agent?
+Use the agent where you need visibility inside the machine itself.
+
+- **Proxmox hosts**: usually yes, because that is how Pulse gets temperatures, S.M.A.R.T., and RAID telemetry.
+- **Plain LXCs**: usually no, because Proxmox already exposes their filesystem and resource usage.
+- **VMs**: install it when you need guest-level visibility beyond what Proxmox plus `qemu-guest-agent` can provide.
+- **Docker/Podman/Kubernetes hosts**: install it on the machine running that workload if you want per-container or cluster visibility.
+
+See [UNIFIED_AGENT.md](UNIFIED_AGENT.md#where-to-install-the-agent) for the fuller decision guide.
+
 ### How do I access the LXC console to run commands?
 If you installed Pulse using the LXC installer, the container is created *without a root password*.  The LXC container uses Proxmox host-level authentication via **pct enter** rather than traditional password login. This is the recommended approach for Proxmox-managed containers.
 
