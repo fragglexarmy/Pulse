@@ -536,7 +536,7 @@ func (m *Monitor) pollVMsWithNodes(ctx context.Context, instanceName string, clu
 					memUsed = memTotal
 				}
 
-				if vm.Status == "running" && vmStatus != nil {
+				if vm.Status == "running" {
 					m.runGuestAgentVMWork(ctx, instanceName, n.Node, vm.Name, vm.VMID, func(agentCtx context.Context) {
 						guestIPs, guestIfaces, guestOSName, guestOSVersion, agentVersion := m.fetchGuestAgentMetadata(agentCtx, client, instanceName, n.Node, vm.Name, vm.VMID, vmStatus)
 						if len(guestIPs) > 0 {

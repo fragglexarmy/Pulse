@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/rcourtman/pulse-go-rewrite/internal/alerts"
 	"github.com/rcourtman/pulse-go-rewrite/internal/config"
 	"github.com/rcourtman/pulse-go-rewrite/internal/mock"
@@ -611,6 +612,77 @@ func TestMonitor_MiscSetters_Extra(t *testing.T) {
 
 	m.SetExecutor(nil)
 	m.SyncAlertState()
+}
+
+func TestPollVMsWithNodes_PreservesCachedGuestMetadataWhenStatusUnavailable(t *testing.T) {
+	t.Setenv("PULSE_DATA_DIR", t.TempDir())
+
+	m := &Monitor{
+		state:                    models.NewState(),
+		guestAgentFSInfoTimeout:  time.Second,
+		guestAgentRetries:        1,
+		guestAgentNetworkTimeout: time.Second,
+		guestAgentOSInfoTimeout:  time.Second,
+		guestAgentVersionTimeout: time.Second,
+		guestMetadataCache:       make(map[string]guestMetadataCacheEntry),
+		guestMetadataLimiter:     make(map[string]time.Time),
+		rateTracker:              NewRateTracker(),
+		metricsHistory:           NewMetricsHistory(100, time.Hour),
+		alertManager:             alerts.NewManager(),
+		stalenessTracker:         NewStalenessTracker(nil),
+		nodeRRDMemCache:          make(map[string]rrdMemCacheEntry),
+		vmRRDMemCache:            make(map[string]rrdMemCacheEntry),
+		vmAgentMemCache:          make(map[string]agentMemCacheEntry),
+	}
+	defer m.alertManager.Stop()
+
+	cacheKey := guestMetadataCacheKey("pve1", "node1", 100)
+	m.guestMetadataCache[cacheKey] = guestMetadataCacheEntry{
+		ipAddresses: []string{"192.168.1.50"},
+		networkInterfaces: []models.GuestNetworkInterface{
+			{Name: "eth0", MAC: "00:11:22:33:44:55", Addresses: []string{"192.168.1.50"}},
+		},
+		osName:       "Debian",
+		osVersion:    "12",
+		agentVersion: "8.2.0",
+		fetchedAt:    time.Now().Add(-time.Minute),
+	}
+
+	client := &mockPVEClientExtra{
+		vms: []proxmox.VM{
+			{VMID: 100, Name: "vm100", Node: "node1", Status: "running", MaxMem: 8 * 1024, Mem: 4 * 1024},
+		},
+		vmStatusErr: fmt.Errorf("API error 500: timeout"),
+	}
+
+	m.pollVMsWithNodes(
+		context.Background(),
+		"pve1",
+		"",
+		false,
+		client,
+		[]proxmox.Node{{Node: "node1", Status: "online"}},
+		map[string]string{"node1": "online"},
+	)
+
+	state := m.GetState()
+	if len(state.VMs) != 1 {
+		t.Fatalf("expected 1 VM, got %d", len(state.VMs))
+	}
+
+	vm := state.VMs[0]
+	if diff := cmp.Diff([]string{"192.168.1.50"}, vm.IPAddresses); diff != "" {
+		t.Fatalf("unexpected IP addresses (-want +got):\n%s", diff)
+	}
+	if len(vm.NetworkInterfaces) != 1 || vm.NetworkInterfaces[0].Name != "eth0" {
+		t.Fatalf("expected cached network interfaces to be preserved, got %#v", vm.NetworkInterfaces)
+	}
+	if vm.OSName != "Debian" || vm.OSVersion != "12" {
+		t.Fatalf("expected cached OS info to be preserved, got %q %q", vm.OSName, vm.OSVersion)
+	}
+	if vm.AgentVersion != "8.2.0" {
+		t.Fatalf("expected cached agent version to be preserved, got %q", vm.AgentVersion)
+	}
 }
 
 func TestMonitor_PollGuestSnapshots_Extra(t *testing.T) {
