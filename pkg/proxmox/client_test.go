@@ -254,6 +254,17 @@ func TestVMFileSystemUnmarshalFlexibleNumbers(t *testing.T) {
 			t.Fatalf("unexpected float string values: got total=%d used=%d", fs.TotalBytes, fs.UsedBytes)
 		}
 	})
+
+	t.Run("falls back to total-bytes-privileged when total-bytes is missing", func(t *testing.T) {
+		payload := `{"name":"windows","type":"ntfs","mountpoint":"C:\\\\","total-bytes-privileged":536870912000,"used-bytes":214748364800}`
+		var fs VMFileSystem
+		if err := json.Unmarshal([]byte(payload), &fs); err != nil {
+			t.Fatalf("unexpected error unmarshalling privileged total-bytes: %v", err)
+		}
+		if fs.TotalBytes != 536870912000 || fs.TotalBytesPrivileged != 536870912000 || fs.UsedBytes != 214748364800 {
+			t.Fatalf("unexpected privileged values: got total=%d privileged=%d used=%d", fs.TotalBytes, fs.TotalBytesPrivileged, fs.UsedBytes)
+		}
+	})
 }
 
 func TestVMFileSystemUnmarshalJSON_InvalidValues(t *testing.T) {

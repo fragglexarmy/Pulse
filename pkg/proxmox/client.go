@@ -1415,23 +1415,25 @@ func (c *Client) GetVMAgentVersion(ctx context.Context, node string, vmid int) (
 
 // VMFileSystem represents filesystem information from QEMU guest agent
 type VMFileSystem struct {
-	Name       string        `json:"name"`
-	Type       string        `json:"type"`
-	Mountpoint string        `json:"mountpoint"`
-	TotalBytes uint64        `json:"total-bytes"`
-	UsedBytes  uint64        `json:"used-bytes"`
-	Disk       string        // Extracted disk device name for duplicate detection
-	DiskRaw    []interface{} `json:"disk"` // Raw disk device info from API
+	Name                 string        `json:"name"`
+	Type                 string        `json:"type"`
+	Mountpoint           string        `json:"mountpoint"`
+	TotalBytes           uint64        `json:"total-bytes"`
+	TotalBytesPrivileged uint64        `json:"total-bytes-privileged"`
+	UsedBytes            uint64        `json:"used-bytes"`
+	Disk                 string        // Extracted disk device name for duplicate detection
+	DiskRaw              []interface{} `json:"disk"` // Raw disk device info from API
 }
 
 func (fs *VMFileSystem) UnmarshalJSON(data []byte) error {
 	type rawVMFileSystem struct {
-		Name       string        `json:"name"`
-		Type       string        `json:"type"`
-		Mountpoint string        `json:"mountpoint"`
-		TotalBytes interface{}   `json:"total-bytes"`
-		UsedBytes  interface{}   `json:"used-bytes"`
-		DiskRaw    []interface{} `json:"disk"`
+		Name                 string        `json:"name"`
+		Type                 string        `json:"type"`
+		Mountpoint           string        `json:"mountpoint"`
+		TotalBytes           interface{}   `json:"total-bytes"`
+		TotalBytesPrivileged interface{}   `json:"total-bytes-privileged"`
+		UsedBytes            interface{}   `json:"used-bytes"`
+		DiskRaw              []interface{} `json:"disk"`
 	}
 
 	var raw rawVMFileSystem
@@ -1443,15 +1445,23 @@ func (fs *VMFileSystem) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	totalPrivileged, err := parseUint64Flexible(raw.TotalBytesPrivileged)
+	if err != nil {
+		return err
+	}
 	used, err := parseUint64Flexible(raw.UsedBytes)
 	if err != nil {
 		return err
+	}
+	if total == 0 && totalPrivileged > 0 {
+		total = totalPrivileged
 	}
 
 	fs.Name = raw.Name
 	fs.Type = raw.Type
 	fs.Mountpoint = raw.Mountpoint
 	fs.TotalBytes = total
+	fs.TotalBytesPrivileged = totalPrivileged
 	fs.UsedBytes = used
 	fs.DiskRaw = raw.DiskRaw
 	fs.Disk = ""
