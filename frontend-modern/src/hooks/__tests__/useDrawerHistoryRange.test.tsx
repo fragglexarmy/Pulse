@@ -1,5 +1,5 @@
 import { fireEvent, render } from '@solidjs/testing-library';
-import { createEffect, type Component } from 'solid-js';
+import { createEffect, createSignal, type Component } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HistoryTimeRange } from '@/api/charts';
 import { useDrawerHistoryRange } from '../useDrawerHistoryRange';
@@ -72,5 +72,49 @@ describe('useDrawerHistoryRange', () => {
       '7d',
     );
     expect(window.localStorage.getItem('pulse.drawerHistoryRange.guest:vm:old-id')).toBeNull();
+  });
+
+  it('rebinds to a new resource key without resetting the selected range', async () => {
+    const SwitchingHarness: Component = () => {
+      const [resourceKey, setResourceKey] = createSignal('guest:vm:instance-a:node-a:101');
+      const [historyRange, setHistoryRange] = useDrawerHistoryRange(resourceKey, {
+        fallbackKeys: () => ['guest:vm:old-id'],
+      });
+
+      return (
+        <>
+          <select
+            aria-label="Dynamic history range"
+            value={historyRange()}
+            onChange={(event) => setHistoryRange(event.currentTarget.value as HistoryTimeRange)}
+          >
+            <option value="1h">Last 1 hour</option>
+            <option value="6h">Last 6 hours</option>
+            <option value="12h">Last 12 hours</option>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+          <button type="button" onClick={() => setResourceKey('guest:vm:instance-a:node-a:101-refresh')}>
+            Switch key
+          </button>
+        </>
+      );
+    };
+
+    const view = render(() => <SwitchingHarness />);
+    const select = view.getByLabelText('Dynamic history range') as HTMLSelectElement;
+
+    await fireEvent.change(select, { target: { value: '7d' } });
+    expect(select.value).toBe('7d');
+
+    await fireEvent.click(view.getByText('Switch key'));
+
+    expect(select.value).toBe('7d');
+    expect(
+      window.localStorage.getItem('pulse.drawerHistoryRange.guest:vm:instance-a:node-a:101-refresh'),
+    ).toBe('7d');
+    expect(window.localStorage.getItem('pulse.drawerHistoryRange.guest:vm:instance-a:node-a:101')).toBeNull();
   });
 });

@@ -118,8 +118,8 @@ export const GuestDrawer: Component<GuestDrawerProps> = (props) => {
     setActiveTab(tab);
   };
 
-  const [historyRange, setHistoryRange] = useDrawerHistoryRange(historyRangeStorageKey(), {
-    fallbackKeys: [`guest:${metricsResource().type}:${metricsResource().id}`],
+  const [historyRange, setHistoryRange] = useDrawerHistoryRange(historyRangeStorageKey, {
+    fallbackKeys: () => [`guest:${metricsResource().type}:${metricsResource().id}`],
   });
   const isHistoryLocked = () =>
     !hasFeature('long_term_metrics') && (historyRange() === '30d' || historyRange() === '90d');

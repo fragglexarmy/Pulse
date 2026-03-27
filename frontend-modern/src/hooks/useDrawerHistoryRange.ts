@@ -1,3 +1,4 @@
+import type { Accessor } from 'solid-js';
 import type { HistoryTimeRange } from '@/api/charts';
 import { usePersistentSignal } from './usePersistentSignal';
 
@@ -18,22 +19,28 @@ function normaliseHistoryRange(value: string): HistoryTimeRange {
 }
 
 interface DrawerHistoryRangeOptions {
-  fallbackKeys?: string[];
+  fallbackKeys?: string[] | Accessor<string[]>;
 }
 
 export function useDrawerHistoryRange(
-  resourceKey: string,
+  resourceKey: string | Accessor<string>,
   options: DrawerHistoryRangeOptions = {},
 ) {
   return usePersistentSignal<HistoryTimeRange>(
-    `${DRAWER_HISTORY_RANGE_PREFIX}.${resourceKey}`,
+    () => `${DRAWER_HISTORY_RANGE_PREFIX}.${typeof resourceKey === 'function' ? resourceKey() : resourceKey}`,
     '1h',
     {
       deserialize: normaliseHistoryRange,
       serialize: (value) => value,
-      fallbackKeys: options.fallbackKeys?.map(
-        (fallbackKey) => `${DRAWER_HISTORY_RANGE_PREFIX}.${fallbackKey}`,
-      ),
+      fallbackKeys: () => {
+        const fallbackKeys =
+          typeof options.fallbackKeys === 'function'
+            ? options.fallbackKeys()
+            : (options.fallbackKeys ?? []);
+        return fallbackKeys.map(
+          (fallbackKey) => `${DRAWER_HISTORY_RANGE_PREFIX}.${fallbackKey}`,
+        );
+      },
     },
   );
 }
