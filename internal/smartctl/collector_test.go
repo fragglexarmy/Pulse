@@ -460,6 +460,34 @@ func TestParseSMARTOutputStandbyPowerMode(t *testing.T) {
 	}
 }
 
+func TestParseSMARTOutputUsesATASCTTemperature(t *testing.T) {
+	payload := smartctlJSON{
+		ModelName:    "WDC WD40EFRX",
+		SerialNumber: "WD-456",
+	}
+	payload.Device.Protocol = "ATA"
+	payload.SmartStatus = &struct {
+		Passed bool `json:"passed"`
+	}{Passed: true}
+	payload.ATASCTStatus.Current.Value = 41
+
+	out, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result, err := parseSMARTOutput(out, smartctlTarget{Path: "/dev/ada0"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result")
+	}
+	if result.Temperature != 41 {
+		t.Fatalf("expected SCT temperature 41, got %#v", result)
+	}
+}
+
 func TestParseRawValue(t *testing.T) {
 	tests := []struct {
 		name     string

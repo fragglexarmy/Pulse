@@ -859,6 +859,61 @@ func TestCollectDeviceSMARTFreeBSDStandbyPayloadFallsBackToUntypedProbe(t *testi
 	}
 }
 
+func TestCollectDeviceSMARTFreeBSDUsesSCTTemperatureFallback(t *testing.T) {
+	origRun := runCommandOutput
+	origLook := execLookPath
+	origNow := timeNow
+	origGOOS := runtimeGOOS
+	t.Cleanup(func() {
+		runCommandOutput = origRun
+		execLookPath = origLook
+		timeNow = origNow
+		runtimeGOOS = origGOOS
+	})
+
+	fixed := time.Date(2024, 4, 7, 10, 30, 0, 0, time.UTC)
+	timeNow = func() time.Time { return fixed }
+	execLookPath = func(string) (string, error) { return "smartctl", nil }
+	runtimeGOOS = "freebsd"
+
+	var attempts [][]string
+	runCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		attempts = append(attempts, append([]string(nil), args...))
+
+		payload := smartctlJSON{}
+		payload.Device.Protocol = "ATA"
+		payload.SmartStatus = &struct {
+			Passed bool `json:"passed"`
+		}{Passed: true}
+
+		for i := 0; i < len(args)-1; i++ {
+			if args[i] == "-l" && args[i+1] == "scttempsts" {
+				payload.ATASCTStatus.Current.Value = 43
+			}
+		}
+
+		out, _ := json.Marshal(payload)
+		return out, nil
+	}
+
+	result, err := collectDeviceSMART(context.Background(), "/dev/ada0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Standby || result.Temperature != 43 || !result.LastUpdated.Equal(fixed) {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("expected typed probe plus SCT retry, got %d attempts: %v", len(attempts), attempts)
+	}
+	if len(attempts[0]) < 2 || attempts[0][0] != "-d" || attempts[0][1] != "sat" {
+		t.Fatalf("expected first probe to use -d sat, got %v", attempts[0])
+	}
+	if !strings.Contains(strings.Join(attempts[1], " "), "-l scttempsts") {
+		t.Fatalf("expected second probe to request SCT temperature status, got %v", attempts[1])
+	}
+}
+
 func TestCollectDeviceSMARTWWN(t *testing.T) {
 	origRun := runCommandOutput
 	origLook := execLookPath

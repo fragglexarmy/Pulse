@@ -102,6 +102,11 @@ type smartctlJSON struct {
 			} `json:"raw"`
 		} `json:"table"`
 	} `json:"ata_smart_attributes"`
+	ATASCTStatus struct {
+		Current struct {
+			Value int `json:"value"`
+		} `json:"current"`
+	} `json:"ata_sct_status"`
 	// NVMe-specific health information
 	NVMeSmartHealthInformationLog struct {
 		Temperature     int   `json:"temperature"`
@@ -732,6 +737,7 @@ func collectSMARTTarget(ctx context.Context, target smartctlTarget) (*DiskSMART,
 			lastErr = parseErr
 			continue
 		}
+		result = enrichFreeBSDSCTTemperature(cmdCtx, smartctlPath, args, target, result)
 		if firstParsed == nil {
 			firstParsed = result
 		}
@@ -803,6 +809,24 @@ func smartctlArgs(device, deviceType string) []string {
 	return args
 }
 
+func smartctlArgsWithLog(args []string, logPage string) []string {
+	if logPage == "" || len(args) == 0 {
+		return append([]string(nil), args...)
+	}
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-l" && args[i+1] == logPage {
+			return append([]string(nil), args...)
+		}
+	}
+
+	deviceIndex := len(args) - 1
+	withLog := make([]string, 0, len(args)+2)
+	withLog = append(withLog, args[:deviceIndex]...)
+	withLog = append(withLog, "-l", logPage)
+	withLog = append(withLog, args[deviceIndex:]...)
+	return withLog
+}
+
 func freeBSDSmartctlDeviceTypes(device string) []string {
 	if runtimeGOOS != "freebsd" {
 		return nil
@@ -830,6 +854,34 @@ func shouldRetryFreeBSDSMART(device string, result *DiskSMART, attemptIndex, att
 	return len(freeBSDSmartctlDeviceTypes(filepath.Base(device))) > 0
 }
 
+func enrichFreeBSDSCTTemperature(ctx context.Context, smartctlPath string, args []string, target smartctlTarget, current *DiskSMART) *DiskSMART {
+	if runtimeGOOS != "freebsd" || current == nil || current.Standby || current.Temperature > 0 {
+		return current
+	}
+	if len(freeBSDSmartctlDeviceTypes(filepath.Base(target.Path))) == 0 {
+		return current
+	}
+
+	sctArgs := smartctlArgsWithLog(args, "scttempsts")
+	if len(sctArgs) == len(args) {
+		return current
+	}
+
+	output, err := runCommandOutput(ctx, smartctlPath, sctArgs...)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || len(output) == 0 {
+			return current
+		}
+	}
+
+	sctResult, parseErr := parseSMARTOutput(output, target)
+	if parseErr != nil || sctResult == nil || sctResult.Temperature <= 0 {
+		return current
+	}
+	return sctResult
+}
+
 func parseSMARTOutput(output []byte, target smartctlTarget) (*DiskSMART, error) {
 	var smartData smartctlJSON
 	if err := json.Unmarshal(output, &smartData); err != nil {
@@ -853,6 +905,8 @@ func parseSMARTOutput(output []byte, target smartctlTarget) (*DiskSMART, error) 
 		result.Temperature = smartData.Temperature.Current
 	} else if smartData.NVMeSmartHealthInformationLog.Temperature > 0 {
 		result.Temperature = smartData.NVMeSmartHealthInformationLog.Temperature
+	} else if smartData.ATASCTStatus.Current.Value > 0 {
+		result.Temperature = smartData.ATASCTStatus.Current.Value
 	} else {
 		for _, attr := range smartData.ATASmartAttributes.Table {
 			if attr.ID == 194 || attr.ID == 190 {
