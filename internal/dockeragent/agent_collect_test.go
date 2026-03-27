@@ -5,11 +5,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
-	containertypes "github.com/docker/docker/api/types/container"
+	containertypes "github.com/moby/moby/api/types/container"
 	"github.com/rs/zerolog"
 )
 
@@ -44,16 +45,16 @@ func TestCollectContainer(t *testing.T) {
 		sizeRw := int64(1234)
 		sizeRoot := int64(5678)
 		inspect := baseInspect()
-		inspect.ContainerJSONBase.SizeRw = &sizeRw
-		inspect.ContainerJSONBase.SizeRootFs = &sizeRoot
-		inspect.ContainerJSONBase.State = &containertypes.State{
+		inspect.SizeRw = &sizeRw
+		inspect.SizeRootFs = &sizeRoot
+		inspect.State = &containertypes.State{
 			Running:   true,
 			StartedAt: time.Now().Add(-time.Minute).Format(time.RFC3339Nano),
 			Health:    &containertypes.Health{Status: "healthy"},
 		}
 		inspect.Config.Env = []string{"PASSWORD=secret", "PATH=/bin"}
 		inspect.Config.Image = "nginx@sha256:abc123"
-		inspect.NetworkSettings.Networks["net1"].IPAddress = "10.0.0.2"
+		inspect.NetworkSettings.Networks["net1"].IPAddress = netip.MustParseAddr("10.0.0.2")
 		inspect.Mounts = []containertypes.MountPoint{
 			{Type: "bind", Source: "/data", Destination: "/data", RW: true},
 		}
@@ -70,7 +71,7 @@ func TestCollectContainer(t *testing.T) {
 				containerInspectWithRawFn: func(context.Context, string, bool) (containertypes.InspectResponse, []byte, error) {
 					return inspect, nil, nil
 				},
-				containerStatsOneShotFn: func(context.Context, string) (containertypes.StatsResponseReader, error) {
+				containerStatsOneShotFn: func(context.Context, string) (containerStatsResult, error) {
 					return statsReader(t, stats), nil
 				},
 			},
@@ -84,8 +85,8 @@ func TestCollectContainer(t *testing.T) {
 			Created: time.Now().Add(-time.Hour).Unix(),
 			State:   "running",
 			Status:  "Up",
-			Ports: []containertypes.Port{
-				{PrivatePort: 80, PublicPort: 8080, Type: "tcp", IP: "0.0.0.0"},
+			Ports: []containertypes.PortSummary{
+				{PrivatePort: 80, PublicPort: 8080, Type: "tcp", IP: netip.MustParseAddr("0.0.0.0")},
 			},
 			Labels: map[string]string{
 				"io.podman.annotations.pod.name": "mypod",
@@ -128,7 +129,7 @@ func TestCollectContainer(t *testing.T) {
 			docker: &fakeDockerClient{
 				containerInspectWithRawFn: func(context.Context, string, bool) (containertypes.InspectResponse, []byte, error) {
 					inspect := baseInspect()
-					inspect.ContainerJSONBase.State = &containertypes.State{Running: false}
+					inspect.State = &containertypes.State{Running: false}
 					return inspect, nil, nil
 				},
 			},
@@ -163,11 +164,11 @@ func TestCollectContainer(t *testing.T) {
 			docker: &fakeDockerClient{
 				containerInspectWithRawFn: func(context.Context, string, bool) (containertypes.InspectResponse, []byte, error) {
 					inspect := baseInspect()
-					inspect.ContainerJSONBase.State = &containertypes.State{Running: true}
+					inspect.State = &containertypes.State{Running: true}
 					return inspect, nil, nil
 				},
-				containerStatsOneShotFn: func(context.Context, string) (containertypes.StatsResponseReader, error) {
-					return containertypes.StatsResponseReader{}, errors.New("stats failed")
+				containerStatsOneShotFn: func(context.Context, string) (containerStatsResult, error) {
+					return containerStatsResult{}, errors.New("stats failed")
 				},
 			},
 			logger: logger,
@@ -183,11 +184,11 @@ func TestCollectContainer(t *testing.T) {
 			docker: &fakeDockerClient{
 				containerInspectWithRawFn: func(context.Context, string, bool) (containertypes.InspectResponse, []byte, error) {
 					inspect := baseInspect()
-					inspect.ContainerJSONBase.State = &containertypes.State{Running: true}
+					inspect.State = &containertypes.State{Running: true}
 					return inspect, nil, nil
 				},
-				containerStatsOneShotFn: func(context.Context, string) (containertypes.StatsResponseReader, error) {
-					return containertypes.StatsResponseReader{Body: io.NopCloser(strings.NewReader("{"))}, nil
+				containerStatsOneShotFn: func(context.Context, string) (containerStatsResult, error) {
+					return containerStatsResult{Body: io.NopCloser(strings.NewReader("{"))}, nil
 				},
 			},
 			logger: logger,
@@ -201,7 +202,7 @@ func TestCollectContainer(t *testing.T) {
 	t.Run("uptime negative clamped", func(t *testing.T) {
 		future := time.Now().Add(5 * time.Minute).Format(time.RFC3339Nano)
 		inspect := baseInspect()
-		inspect.ContainerJSONBase.State = &containertypes.State{
+		inspect.State = &containertypes.State{
 			Running:   true,
 			StartedAt: future,
 		}
@@ -226,7 +227,7 @@ func TestCollectContainer(t *testing.T) {
 				containerInspectWithRawFn: func(context.Context, string, bool) (containertypes.InspectResponse, []byte, error) {
 					return inspect, nil, nil
 				},
-				containerStatsOneShotFn: func(context.Context, string) (containertypes.StatsResponseReader, error) {
+				containerStatsOneShotFn: func(context.Context, string) (containerStatsResult, error) {
 					return statsReader(t, stats), nil
 				},
 			},
@@ -248,7 +249,7 @@ func TestCollectContainers(t *testing.T) {
 	t.Run("list error", func(t *testing.T) {
 		agent := &Agent{
 			docker: &fakeDockerClient{
-				containerListFunc: func(context.Context, containertypes.ListOptions) ([]containertypes.Summary, error) {
+				containerListFunc: func(context.Context, containerListOptions) ([]containertypes.Summary, error) {
 					return nil, errors.New("list failed")
 				},
 			},
@@ -271,7 +272,7 @@ func TestCollectContainers(t *testing.T) {
 				"stale": {totalUsage: 1},
 			},
 			docker: &fakeDockerClient{
-				containerListFunc: func(_ context.Context, opts containertypes.ListOptions) ([]containertypes.Summary, error) {
+				containerListFunc: func(_ context.Context, opts containerListOptions) ([]containertypes.Summary, error) {
 					if opts.Filters.Len() == 0 {
 						t.Fatal("expected filters to be set")
 					}

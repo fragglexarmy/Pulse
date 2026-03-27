@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	containertypes "github.com/docker/docker/api/types/container"
+	containertypes "github.com/moby/moby/api/types/container"
 	"github.com/rs/zerolog"
 )
 

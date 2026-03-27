@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	systemtypes "github.com/docker/docker/api/types/system"
+	systemtypes "github.com/moby/moby/api/types/system"
 	"github.com/rcourtman/pulse-go-rewrite/internal/buffer"
 	"github.com/rcourtman/pulse-go-rewrite/internal/hostmetrics"
 	agentsdocker "github.com/rcourtman/pulse-go-rewrite/pkg/agents/docker"

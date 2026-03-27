@@ -12,9 +12,8 @@ import (
 	"testing"
 	"time"
 
-	containertypes "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
+	containertypes "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/opencontainers/image-spec/specs-go/v1"
 	agentsdocker "github.com/rcourtman/pulse-go-rewrite/pkg/agents/docker"
 	"github.com/rs/zerolog"
@@ -25,13 +24,11 @@ func baseInspect() containertypes.InspectResponse {
 	hostConfig := &containertypes.HostConfig{}
 
 	return containertypes.InspectResponse{
-		ContainerJSONBase: &containertypes.ContainerJSONBase{
-			Name:         "/app",
-			Image:        "sha256:old0000000000",
-			State:        state,
-			RestartCount: 1,
-			HostConfig:   hostConfig,
-		},
+		Name:         "/app",
+		Image:        "sha256:old0000000000",
+		State:        state,
+		RestartCount: 1,
+		HostConfig:   hostConfig,
 		Config: &containertypes.Config{
 			Image: "nginx:latest",
 		},
@@ -69,7 +66,7 @@ func TestUpdateContainer_Errors(t *testing.T) {
 				containerInspectFn: func(context.Context, string) (containertypes.InspectResponse, error) {
 					return baseInspect(), nil
 				},
-				imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+				imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 					return nil, errors.New("pull failed")
 				},
 			},
@@ -88,10 +85,10 @@ func TestUpdateContainer_Errors(t *testing.T) {
 				containerInspectFn: func(context.Context, string) (containertypes.InspectResponse, error) {
 					return baseInspect(), nil
 				},
-				imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+				imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 					return io.NopCloser(strings.NewReader("{}")), nil
 				},
-				containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+				containerStopFn: func(context.Context, string, containerStopOptions) error {
 					return errors.New("stop failed")
 				},
 			},
@@ -111,16 +108,16 @@ func TestUpdateContainer_Errors(t *testing.T) {
 				containerInspectFn: func(context.Context, string) (containertypes.InspectResponse, error) {
 					return baseInspect(), nil
 				},
-				imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+				imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 					return io.NopCloser(strings.NewReader("{}")), nil
 				},
-				containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+				containerStopFn: func(context.Context, string, containerStopOptions) error {
 					return nil
 				},
 				containerRenameFn: func(context.Context, string, string) error {
 					return errors.New("rename failed")
 				},
-				containerStartFn: func(context.Context, string, containertypes.StartOptions) error {
+				containerStartFn: func(context.Context, string, containerStartOptions) error {
 					startCalled = true
 					return nil
 				},
@@ -145,10 +142,10 @@ func TestUpdateContainer_Errors(t *testing.T) {
 				containerInspectFn: func(context.Context, string) (containertypes.InspectResponse, error) {
 					return baseInspect(), nil
 				},
-				imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+				imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 					return io.NopCloser(strings.NewReader("{}")), nil
 				},
-				containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+				containerStopFn: func(context.Context, string, containerStopOptions) error {
 					return nil
 				},
 				containerRenameFn: func(context.Context, string, string) error {
@@ -158,7 +155,7 @@ func TestUpdateContainer_Errors(t *testing.T) {
 				containerCreateFn: func(context.Context, *containertypes.Config, *containertypes.HostConfig, *network.NetworkingConfig, *v1.Platform, string) (containertypes.CreateResponse, error) {
 					return containertypes.CreateResponse{}, errors.New("create failed")
 				},
-				containerStartFn: func(context.Context, string, containertypes.StartOptions) error {
+				containerStartFn: func(context.Context, string, containerStartOptions) error {
 					startCalled = true
 					return nil
 				},
@@ -184,23 +181,23 @@ func TestUpdateContainer_Errors(t *testing.T) {
 				containerInspectFn: func(context.Context, string) (containertypes.InspectResponse, error) {
 					return baseInspect(), nil
 				},
-				imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+				imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 					return io.NopCloser(strings.NewReader("{}")), nil
 				},
-				containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+				containerStopFn: func(context.Context, string, containerStopOptions) error {
 					return nil
 				},
 				containerCreateFn: func(context.Context, *containertypes.Config, *containertypes.HostConfig, *network.NetworkingConfig, *v1.Platform, string) (containertypes.CreateResponse, error) {
 					return containertypes.CreateResponse{ID: "new123"}, nil
 				},
-				containerStartFn: func(_ context.Context, id string, _ containertypes.StartOptions) error {
+				containerStartFn: func(_ context.Context, id string, _ containerStartOptions) error {
 					if id == "new123" {
 						return errors.New("start failed")
 					}
 					restarted = true
 					return nil
 				},
-				containerRemoveFn: func(context.Context, string, containertypes.RemoveOptions) error {
+				containerRemoveFn: func(context.Context, string, containerRemoveOptions) error {
 					removed = true
 					return nil
 				},
@@ -241,15 +238,15 @@ func TestUpdateContainer_Success(t *testing.T) {
 			containerInspectFn: func(_ context.Context, id string) (containertypes.InspectResponse, error) {
 				if id == "new123" {
 					inspect := baseInspect()
-					inspect.ContainerJSONBase.Image = "sha256:new0000000000"
+					inspect.Image = "sha256:new0000000000"
 					return inspect, nil
 				}
 				return baseInspect(), nil
 			},
-			imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+			imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("{}")), nil
 			},
-			containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+			containerStopFn: func(context.Context, string, containerStopOptions) error {
 				return nil
 			},
 			containerRenameFn: func(context.Context, string, string) error {
@@ -261,10 +258,10 @@ func TestUpdateContainer_Success(t *testing.T) {
 			networkConnectFn: func(context.Context, string, string, *network.EndpointSettings) error {
 				return errors.New("network connect failed")
 			},
-			containerStartFn: func(context.Context, string, containertypes.StartOptions) error {
+			containerStartFn: func(context.Context, string, containerStartOptions) error {
 				return nil
 			},
-			containerRemoveFn: func(context.Context, string, containertypes.RemoveOptions) error {
+			containerRemoveFn: func(context.Context, string, containerRemoveOptions) error {
 				mu.Lock()
 				cleanupCalls++
 				err := cleanupErr
@@ -311,15 +308,15 @@ func TestUpdateContainer_CleanupError(t *testing.T) {
 			containerInspectFn: func(_ context.Context, id string) (containertypes.InspectResponse, error) {
 				if id == "new123" {
 					inspect := baseInspect()
-					inspect.ContainerJSONBase.Image = "sha256:new0000000000"
+					inspect.Image = "sha256:new0000000000"
 					return inspect, nil
 				}
 				return baseInspect(), nil
 			},
-			imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+			imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("{}")), nil
 			},
-			containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+			containerStopFn: func(context.Context, string, containerStopOptions) error {
 				return nil
 			},
 			containerRenameFn: func(context.Context, string, string) error {
@@ -328,10 +325,10 @@ func TestUpdateContainer_CleanupError(t *testing.T) {
 			containerCreateFn: func(context.Context, *containertypes.Config, *containertypes.HostConfig, *network.NetworkingConfig, *v1.Platform, string) (containertypes.CreateResponse, error) {
 				return containertypes.CreateResponse{ID: "new123"}, nil
 			},
-			containerStartFn: func(context.Context, string, containertypes.StartOptions) error {
+			containerStartFn: func(context.Context, string, containerStartOptions) error {
 				return nil
 			},
-			containerRemoveFn: func(context.Context, string, containertypes.RemoveOptions) error {
+			containerRemoveFn: func(context.Context, string, containerRemoveOptions) error {
 				close(done)
 				return cleanupErr
 			},
@@ -364,14 +361,14 @@ func TestHandleUpdateContainerCommand(t *testing.T) {
 			containerInspectFn: func(_ context.Context, id string) (containertypes.InspectResponse, error) {
 				inspect := baseInspect()
 				if id == "new123" {
-					inspect.ContainerJSONBase.Image = "sha256:new0000000000"
+					inspect.Image = "sha256:new0000000000"
 				}
 				return inspect, nil
 			},
-			imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+			imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("{}")), nil
 			},
-			containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+			containerStopFn: func(context.Context, string, containerStopOptions) error {
 				return nil
 			},
 			containerRenameFn: func(context.Context, string, string) error {
@@ -380,7 +377,7 @@ func TestHandleUpdateContainerCommand(t *testing.T) {
 			containerCreateFn: func(context.Context, *containertypes.Config, *containertypes.HostConfig, *network.NetworkingConfig, *v1.Platform, string) (containertypes.CreateResponse, error) {
 				return containertypes.CreateResponse{ID: "new123"}, nil
 			},
-			containerStartFn: func(context.Context, string, containertypes.StartOptions) error {
+			containerStartFn: func(context.Context, string, containerStartOptions) error {
 				return nil
 			},
 		},
@@ -500,14 +497,14 @@ func TestHandleUpdateContainerCommand(t *testing.T) {
 				containerInspectFn: func(_ context.Context, id string) (containertypes.InspectResponse, error) {
 					inspect := baseInspect()
 					if id == "new123" {
-						inspect.ContainerJSONBase.Image = "sha256:new0000000000"
+						inspect.Image = "sha256:new0000000000"
 					}
 					return inspect, nil
 				},
-				imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+				imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 					return io.NopCloser(strings.NewReader("{}")), nil
 				},
-				containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+				containerStopFn: func(context.Context, string, containerStopOptions) error {
 					return nil
 				},
 				containerRenameFn: func(context.Context, string, string) error {
@@ -516,7 +513,7 @@ func TestHandleUpdateContainerCommand(t *testing.T) {
 				containerCreateFn: func(context.Context, *containertypes.Config, *containertypes.HostConfig, *network.NetworkingConfig, *v1.Platform, string) (containertypes.CreateResponse, error) {
 					return containertypes.CreateResponse{ID: "new123"}, nil
 				},
-				containerStartFn: func(context.Context, string, containertypes.StartOptions) error {
+				containerStartFn: func(context.Context, string, containerStartOptions) error {
 					return nil
 				},
 			},
@@ -561,14 +558,14 @@ func TestHandleUpdateContainerCommand(t *testing.T) {
 				containerInspectFn: func(_ context.Context, id string) (containertypes.InspectResponse, error) {
 					inspect := baseInspect()
 					if id == "new123" {
-						inspect.ContainerJSONBase.Image = "sha256:new0000000000"
+						inspect.Image = "sha256:new0000000000"
 					}
 					return inspect, nil
 				},
-				imagePullFn: func(context.Context, string, image.PullOptions) (io.ReadCloser, error) {
+				imagePullFn: func(context.Context, string, imagePullOptions) (io.ReadCloser, error) {
 					return io.NopCloser(strings.NewReader("{}")), nil
 				},
-				containerStopFn: func(context.Context, string, containertypes.StopOptions) error {
+				containerStopFn: func(context.Context, string, containerStopOptions) error {
 					return nil
 				},
 				containerRenameFn: func(context.Context, string, string) error {
@@ -577,7 +574,7 @@ func TestHandleUpdateContainerCommand(t *testing.T) {
 				containerCreateFn: func(context.Context, *containertypes.Config, *containertypes.HostConfig, *network.NetworkingConfig, *v1.Platform, string) (containertypes.CreateResponse, error) {
 					return containertypes.CreateResponse{ID: "new123"}, nil
 				},
-				containerStartFn: func(context.Context, string, containertypes.StartOptions) error {
+				containerStartFn: func(context.Context, string, containerStartOptions) error {
 					return nil
 				},
 			},

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	systemtypes "github.com/docker/docker/api/types/system"
-	"github.com/docker/docker/client"
+	systemtypes "github.com/moby/moby/api/types/system"
+	"github.com/moby/moby/client"
 	"github.com/rcourtman/pulse-go-rewrite/internal/buffer"
 	"github.com/rcourtman/pulse-go-rewrite/internal/utils"
 	agentsdocker "github.com/rcourtman/pulse-go-rewrite/pkg/agents/docker"

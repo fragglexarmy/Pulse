@@ -11,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	containertypes "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
+	containertypes "github.com/moby/moby/api/types/container"
 	agentsdocker "github.com/rcourtman/pulse-go-rewrite/pkg/agents/docker"
 )
 
@@ -171,9 +170,9 @@ func (a *Agent) buildReport(ctx context.Context) (agentsdocker.Report, error) {
 }
 
 func (a *Agent) collectContainers(ctx context.Context) ([]agentsdocker.Container, error) {
-	options := containertypes.ListOptions{All: true}
+	options := containerListOptions{All: true}
 	if len(a.stateFilters) > 0 {
-		filterArgs := filters.NewArgs()
+		filterArgs := newDockerFilters()
 		for _, state := range a.stateFilters {
 			filterArgs.Add("status", state)
 		}
@@ -189,7 +188,7 @@ func (a *Agent) collectContainers(ctx context.Context) ([]agentsdocker.Container
 	active := make(map[string]struct{}, len(list))
 	for _, summary := range list {
 		if len(a.allowedStates) > 0 {
-			if _, ok := a.allowedStates[strings.ToLower(summary.State)]; !ok {
+			if _, ok := a.allowedStates[strings.ToLower(string(summary.State))]; !ok {
 				continue
 			}
 		}
@@ -292,7 +291,7 @@ func (a *Agent) collectContainer(ctx context.Context, summary containertypes.Sum
 
 	health := ""
 	if inspect.State.Health != nil {
-		health = inspect.State.Health.Status
+		health = string(inspect.State.Health.Status)
 	}
 
 	ports := make([]agentsdocker.ContainerPort, len(summary.Ports))
@@ -301,7 +300,7 @@ func (a *Agent) collectContainer(ctx context.Context, summary containertypes.Sum
 			PrivatePort: int(port.PrivatePort),
 			PublicPort:  int(port.PublicPort),
 			Protocol:    port.Type,
-			IP:          port.IP,
+			IP:          dockerAddrString(port.IP),
 		}
 	}
 
@@ -315,8 +314,8 @@ func (a *Agent) collectContainer(ctx context.Context, summary containertypes.Sum
 		for name, cfg := range inspect.NetworkSettings.Networks {
 			networks = append(networks, agentsdocker.ContainerNetwork{
 				Name: name,
-				IPv4: cfg.IPAddress,
-				IPv6: cfg.GlobalIPv6Address,
+				IPv4: dockerAddrString(cfg.IPAddress),
+				IPv6: dockerAddrString(cfg.GlobalIPv6Address),
 			})
 		}
 	}
@@ -364,7 +363,7 @@ func (a *Agent) collectContainer(ctx context.Context, summary containertypes.Sum
 		Image:               summary.Image,
 		ImageDigest:         summary.ImageID, // sha256:... digest of the image
 		CreatedAt:           createdAt,
-		State:               summary.State,
+		State:               string(summary.State),
 		Status:              summary.Status,
 		Health:              health,
 		CPUPercent:          cpuPercent,
@@ -873,4 +872,14 @@ func maskSensitiveEnvVars(envVars []string) []string {
 	}
 
 	return result
+}
+
+func dockerAddrString(addr interface {
+	IsValid() bool
+	String() string
+}) string {
+	if !addr.IsValid() {
+		return ""
+	}
+	return addr.String()
 }

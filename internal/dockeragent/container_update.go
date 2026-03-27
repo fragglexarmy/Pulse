@@ -7,9 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/network"
 	agentsdocker "github.com/rcourtman/pulse-go-rewrite/pkg/agents/docker"
 )
 
@@ -144,7 +142,7 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 	reportProgress(fmt.Sprintf("Pulling image %s...", imageName))
 	a.logger.Info().Str("image", imageName).Msg("Pulling latest image")
 
-	pullResp, err := a.docker.ImagePull(ctx, imageName, image.PullOptions{})
+	pullResp, err := a.docker.ImagePull(ctx, imageName, imagePullOptions{})
 	if err != nil {
 		result.Error = fmt.Sprintf("Failed to pull image %s: %v", imageName, err)
 		a.logger.Error().Err(err).Str("image", imageName).Msg("Failed to pull latest image")
@@ -159,7 +157,7 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 	// 3. Stop the current container
 	reportProgress(fmt.Sprintf("Stopping container %s...", result.ContainerName))
 	stopTimeout := 30 // seconds
-	if err := a.docker.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+	if err := a.docker.ContainerStop(ctx, containerID, containerStopOptions{Timeout: &stopTimeout}); err != nil {
 		result.Error = fmt.Sprintf("Failed to stop container: %v", err)
 		a.logger.Error().Err(err).Str("container", result.ContainerName).Msg("Failed to stop container")
 		return result
@@ -173,7 +171,7 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 		result.Error = fmt.Sprintf("Failed to rename container for backup: %v", err)
 		a.logger.Error().Err(err).Str("container", result.ContainerName).Msg("Failed to rename container for backup")
 		// Try to restart the original container
-		_ = a.docker.ContainerStart(ctx, containerID, container.StartOptions{})
+		_ = a.docker.ContainerStart(ctx, containerID, containerStartOptions{})
 		return result
 	}
 
@@ -197,9 +195,6 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 				IPAMConfig: netConfig.IPAMConfig,
 				Links:      netConfig.Links,
 				NetworkID:  netConfig.NetworkID,
-				EndpointID: "", // Will be assigned
-				Gateway:    "", // Will be assigned
-				IPAddress:  "", // Will be assigned
 				MacAddress: netConfig.MacAddress,
 				DriverOpts: netConfig.DriverOpts,
 			}
@@ -221,7 +216,7 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 		a.logger.Error().Err(err).Str("container", result.ContainerName).Msg("Failed to create new container")
 		// Rollback: rename backup back to original name
 		_ = a.docker.ContainerRename(ctx, backupName, result.ContainerName)
-		_ = a.docker.ContainerStart(ctx, containerID, container.StartOptions{})
+		_ = a.docker.ContainerStart(ctx, containerID, containerStartOptions{})
 		return result
 	}
 
@@ -252,13 +247,13 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 
 	// 8. Start the new container
 	reportProgress(fmt.Sprintf("Starting container %s...", result.ContainerName))
-	if err := a.docker.ContainerStart(ctx, newContainerID, container.StartOptions{}); err != nil {
+	if err := a.docker.ContainerStart(ctx, newContainerID, containerStartOptions{}); err != nil {
 		result.Error = fmt.Sprintf("Failed to start new container: %v", err)
 		a.logger.Error().Err(err).Str("container", result.ContainerName).Msg("Failed to start new container")
 		// Rollback: remove new container, rename backup back
-		_ = a.docker.ContainerRemove(ctx, newContainerID, container.RemoveOptions{Force: true})
+		_ = a.docker.ContainerRemove(ctx, newContainerID, containerRemoveOptions{Force: true})
 		_ = a.docker.ContainerRename(ctx, backupName, result.ContainerName)
-		_ = a.docker.ContainerStart(ctx, containerID, container.StartOptions{})
+		_ = a.docker.ContainerStart(ctx, containerID, containerStartOptions{})
 		return result
 	}
 
@@ -274,9 +269,9 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 		result.Error = fmt.Sprintf("Failed to inspect new container during verification: %v", err)
 		a.logger.Error().Err(err).Str("container", result.ContainerName).Msg("Failed to verify container stability")
 		// Rollback
-		_ = a.docker.ContainerRemove(ctx, newContainerID, container.RemoveOptions{Force: true})
+		_ = a.docker.ContainerRemove(ctx, newContainerID, containerRemoveOptions{Force: true})
 		_ = a.docker.ContainerRename(ctx, backupName, result.ContainerName)
-		_ = a.docker.ContainerStart(ctx, containerID, container.StartOptions{})
+		_ = a.docker.ContainerStart(ctx, containerID, containerStartOptions{})
 		return result
 	}
 
@@ -285,9 +280,9 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 		result.Error = fmt.Sprintf("New container crashed immediately (exit code %d): %s", verifyInspect.State.ExitCode, verifyInspect.State.Error)
 		a.logger.Error().Str("container", result.ContainerName).Int("exitCode", verifyInspect.State.ExitCode).Msg("New container crashed, rolling back")
 		// Rollback
-		_ = a.docker.ContainerRemove(ctx, newContainerID, container.RemoveOptions{Force: true})
+		_ = a.docker.ContainerRemove(ctx, newContainerID, containerRemoveOptions{Force: true})
 		_ = a.docker.ContainerRename(ctx, backupName, result.ContainerName)
-		_ = a.docker.ContainerStart(ctx, containerID, container.StartOptions{})
+		_ = a.docker.ContainerStart(ctx, containerID, containerStartOptions{})
 		return result
 	}
 
@@ -296,9 +291,9 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 		result.Error = "New container reported unhealthy status"
 		a.logger.Error().Str("container", result.ContainerName).Msg("New container unhealthy, rolling back")
 		// Rollback
-		_ = a.docker.ContainerRemove(ctx, newContainerID, container.RemoveOptions{Force: true})
+		_ = a.docker.ContainerRemove(ctx, newContainerID, containerRemoveOptions{Force: true})
 		_ = a.docker.ContainerRename(ctx, backupName, result.ContainerName)
-		_ = a.docker.ContainerStart(ctx, containerID, container.StartOptions{})
+		_ = a.docker.ContainerStart(ctx, containerID, containerStartOptions{})
 		return result
 	}
 
@@ -309,7 +304,7 @@ func (a *Agent) updateContainerWithProgress(ctx context.Context, containerID str
 	go func() {
 		sleepFn(5 * time.Minute)
 		cleanupCtx := context.Background()
-		if err := a.docker.ContainerRemove(cleanupCtx, backupName, container.RemoveOptions{Force: true}); err != nil {
+		if err := a.docker.ContainerRemove(cleanupCtx, backupName, containerRemoveOptions{Force: true}); err != nil {
 			a.logger.Warn().Err(err).Str("backup", backupName).Msg("Failed to cleanup backup container")
 		} else {
 			a.logger.Info().Str("backup", backupName).Msg("Backup container cleaned up")
