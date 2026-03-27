@@ -215,6 +215,72 @@ func TestClientClusterAndAgentInfo(t *testing.T) {
 	}
 }
 
+func TestClientVMNetworkInterfacesSingleObjectResult(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/json/nodes/node1/qemu/100/agent/network-get-interfaces":
+			writeJSON(t, w, map[string]interface{}{
+				"data": map[string]interface{}{
+					"result": map[string]interface{}{
+						"name":             "Ethernet0",
+						"hardware-address": "aa:bb:cc:dd:ee:ff",
+						"ip-addresses": []map[string]interface{}{
+							{"ip-address": "192.168.1.20", "prefix": 24},
+						},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	ifaces, err := client.GetVMNetworkInterfaces(context.Background(), "node1", 100)
+	if err != nil {
+		t.Fatalf("GetVMNetworkInterfaces error: %v", err)
+	}
+	if len(ifaces) != 1 {
+		t.Fatalf("expected 1 interface, got %d", len(ifaces))
+	}
+	if ifaces[0].Name != "Ethernet0" {
+		t.Fatalf("unexpected interface: %+v", ifaces[0])
+	}
+	if len(ifaces[0].IPAddresses) != 1 || ifaces[0].IPAddresses[0].Address != "192.168.1.20" {
+		t.Fatalf("unexpected interface addresses: %+v", ifaces[0].IPAddresses)
+	}
+}
+
+func TestClientVMNetworkInterfacesSkipsMalformedEntries(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/json/nodes/node1/qemu/100/agent/network-get-interfaces":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"result": [
+						{"name": "eth0", "hardware-address": "aa:bb:cc:dd:ee:ff"},
+						{"name": {"bad":"shape"}},
+						{"name": "eth1", "ip-addresses": [{"ip-address": "10.0.0.5", "prefix": 24}]}
+					]
+				}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	ifaces, err := client.GetVMNetworkInterfaces(context.Background(), "node1", 100)
+	if err != nil {
+		t.Fatalf("GetVMNetworkInterfaces error: %v", err)
+	}
+	if len(ifaces) != 2 {
+		t.Fatalf("expected 2 valid interfaces, got %d: %+v", len(ifaces), ifaces)
+	}
+	if ifaces[0].Name != "eth0" || ifaces[1].Name != "eth1" {
+		t.Fatalf("unexpected interfaces: %+v", ifaces)
+	}
+}
+
 func TestClientStatusAndResources(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

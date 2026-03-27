@@ -1737,17 +1737,74 @@ func (c *Client) GetVMNetworkInterfaces(ctx context.Context, node string, vmid i
 	}
 	defer resp.Body.Close()
 
-	var result struct {
-		Data struct {
-			Result []VMNetworkInterface `json:"result"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
 
-	return result.Data.Result, nil
+	var arrayResult struct {
+		Data struct {
+			Result []json.RawMessage `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(bodyBytes, &arrayResult); err == nil && arrayResult.Data.Result != nil {
+		interfaces := make([]VMNetworkInterface, 0, len(arrayResult.Data.Result))
+		for idx, rawIface := range arrayResult.Data.Result {
+			var iface VMNetworkInterface
+			if err := json.Unmarshal(rawIface, &iface); err != nil {
+				log.Warn().
+					Err(err).
+					Str("node", node).
+					Int("vmid", vmid).
+					Int("interface_index", idx).
+					Msg("Skipping malformed guest agent network interface entry")
+				continue
+			}
+			interfaces = append(interfaces, iface)
+		}
+		return interfaces, nil
+	}
+
+	var objectResult struct {
+		Data struct {
+			Result interface{} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(bodyBytes, &objectResult); err == nil {
+		if objectResult.Data.Result == nil {
+			return []VMNetworkInterface{}, nil
+		}
+
+		if ifaceMap, ok := objectResult.Data.Result.(map[string]interface{}); ok && looksLikeVMNetworkInterfaceResult(ifaceMap) {
+			rawIface, marshalErr := json.Marshal(ifaceMap)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("failed to marshal object-style guest network interface result: %w", marshalErr)
+			}
+			var iface VMNetworkInterface
+			if unmarshalErr := json.Unmarshal(rawIface, &iface); unmarshalErr != nil {
+				return nil, fmt.Errorf("failed to parse object-style guest network interface result: %w", unmarshalErr)
+			}
+			return []VMNetworkInterface{iface}, nil
+		}
+
+		return []VMNetworkInterface{}, nil
+	}
+
+	return nil, fmt.Errorf("unexpected response format from guest agent network-get-interfaces")
+}
+
+func looksLikeVMNetworkInterfaceResult(result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+
+	for _, key := range []string{"name", "hardware-address", "ip-addresses", "statistics"} {
+		if _, ok := result[key]; ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetVMMemAvailableFromAgent reads /proc/meminfo via the QEMU guest agent's
