@@ -1569,6 +1569,25 @@ type VMIpAddress struct {
 	Prefix  int    `json:"prefix"`
 }
 
+func (a *VMIpAddress) UnmarshalJSON(data []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	a.Address = coerceString(raw["ip-address"])
+
+	prefix, err := coerceUint64("prefix", raw["prefix"])
+	if err != nil {
+		prefix = 0
+	}
+	if prefix > math.MaxInt {
+		prefix = math.MaxInt
+	}
+	a.Prefix = int(prefix)
+	return nil
+}
+
 type VMNetworkInterface struct {
 	Name          string        `json:"name"`
 	HardwareAddr  string        `json:"hardware-address"`
@@ -1576,6 +1595,133 @@ type VMNetworkInterface struct {
 	Statistics    interface{}   `json:"statistics,omitempty"`
 	HasIp4Gateway bool          `json:"has-ipv4-synth-gateway,omitempty"`
 	HasIp6Gateway bool          `json:"has-ipv6-synth-gateway,omitempty"`
+}
+
+func (iface *VMNetworkInterface) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	iface.Name = unmarshalRawString(raw["name"])
+	iface.HardwareAddr = unmarshalRawString(raw["hardware-address"])
+	iface.HasIp4Gateway = unmarshalRawBool(raw["has-ipv4-synth-gateway"])
+	iface.HasIp6Gateway = unmarshalRawBool(raw["has-ipv6-synth-gateway"])
+
+	if statsRaw, ok := raw["statistics"]; ok && len(statsRaw) > 0 && string(statsRaw) != "null" {
+		var stats interface{}
+		if err := json.Unmarshal(statsRaw, &stats); err == nil {
+			iface.Statistics = stats
+		}
+	}
+
+	iface.IPAddresses = nil
+	if addressesRaw, ok := raw["ip-addresses"]; ok && len(addressesRaw) > 0 && string(addressesRaw) != "null" {
+		var rawAddresses []json.RawMessage
+		if err := json.Unmarshal(addressesRaw, &rawAddresses); err == nil {
+			iface.IPAddresses = decodeVMIpAddresses(rawAddresses)
+		} else {
+			var rawAddress json.RawMessage
+			if err := json.Unmarshal(addressesRaw, &rawAddress); err == nil && len(rawAddress) > 0 {
+				iface.IPAddresses = decodeVMIpAddresses([]json.RawMessage{rawAddress})
+			}
+		}
+	}
+
+	return nil
+}
+
+func decodeVMIpAddresses(rawAddresses []json.RawMessage) []VMIpAddress {
+	if len(rawAddresses) == 0 {
+		return nil
+	}
+
+	addresses := make([]VMIpAddress, 0, len(rawAddresses))
+	for _, rawAddr := range rawAddresses {
+		var addr VMIpAddress
+		if err := json.Unmarshal(rawAddr, &addr); err != nil {
+			continue
+		}
+		if addr.Address == "" {
+			continue
+		}
+		addresses = append(addresses, addr)
+	}
+	if len(addresses) == 0 {
+		return nil
+	}
+	return addresses
+}
+
+func unmarshalRawString(data json.RawMessage) string {
+	if len(data) == 0 || string(data) == "null" {
+		return ""
+	}
+
+	var value interface{}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return ""
+	}
+	return coerceString(value)
+}
+
+func unmarshalRawBool(data json.RawMessage) bool {
+	if len(data) == 0 || string(data) == "null" {
+		return false
+	}
+
+	var value bool
+	if err := json.Unmarshal(data, &value); err == nil {
+		return value
+	}
+
+	var generic interface{}
+	if err := json.Unmarshal(data, &generic); err != nil {
+		return false
+	}
+
+	switch v := generic.(type) {
+	case string:
+		lower := strings.ToLower(strings.TrimSpace(v))
+		return lower == "true" || lower == "1" || lower == "yes"
+	case float64:
+		return v != 0
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case uint64:
+		return v != 0
+	default:
+		return false
+	}
+}
+
+func coerceString(value interface{}) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case json.Number:
+		return strings.TrimSpace(v.String())
+	case float64:
+		return strings.TrimSpace(strconv.FormatFloat(v, 'f', -1, 64))
+	case float32:
+		return strings.TrimSpace(strconv.FormatFloat(float64(v), 'f', -1, 32))
+	case int:
+		return strconv.Itoa(v)
+	case int32:
+		return strconv.FormatInt(int64(v), 10)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint64:
+		return strconv.FormatUint(v, 10)
+	default:
+		return ""
+	}
 }
 
 // GetVMFSInfo returns filesystem information from QEMU guest agent
@@ -1760,6 +1906,9 @@ func (c *Client) GetVMNetworkInterfaces(ctx context.Context, node string, vmid i
 					Msg("Skipping malformed guest agent network interface entry")
 				continue
 			}
+			if !vmNetworkInterfaceHasUsefulData(iface) {
+				continue
+			}
 			interfaces = append(interfaces, iface)
 		}
 		return interfaces, nil
@@ -1784,6 +1933,9 @@ func (c *Client) GetVMNetworkInterfaces(ctx context.Context, node string, vmid i
 			if unmarshalErr := json.Unmarshal(rawIface, &iface); unmarshalErr != nil {
 				return nil, fmt.Errorf("failed to parse object-style guest network interface result: %w", unmarshalErr)
 			}
+			if !vmNetworkInterfaceHasUsefulData(iface) {
+				return []VMNetworkInterface{}, nil
+			}
 			return []VMNetworkInterface{iface}, nil
 		}
 
@@ -1791,6 +1943,15 @@ func (c *Client) GetVMNetworkInterfaces(ctx context.Context, node string, vmid i
 	}
 
 	return nil, fmt.Errorf("unexpected response format from guest agent network-get-interfaces")
+}
+
+func vmNetworkInterfaceHasUsefulData(iface VMNetworkInterface) bool {
+	return iface.Name != "" ||
+		iface.HardwareAddr != "" ||
+		len(iface.IPAddresses) > 0 ||
+		iface.Statistics != nil ||
+		iface.HasIp4Gateway ||
+		iface.HasIp6Gateway
 }
 
 func looksLikeVMNetworkInterfaceResult(result map[string]interface{}) bool {

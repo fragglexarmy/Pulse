@@ -281,6 +281,82 @@ func TestClientVMNetworkInterfacesSkipsMalformedEntries(t *testing.T) {
 	}
 }
 
+func TestClientVMNetworkInterfacesSkipsMalformedAddressEntries(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/json/nodes/node1/qemu/100/agent/network-get-interfaces":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"result": [
+						{
+							"name": "eth0",
+							"ip-addresses": [
+								{"ip-address": "192.168.10.20", "prefix": 24},
+								{"ip-address": {"bad":"shape"}, "prefix": "24"},
+								{"ip-address": "2001:db8::10", "prefix": "64"}
+							]
+						}
+					]
+				}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	ifaces, err := client.GetVMNetworkInterfaces(context.Background(), "node1", 100)
+	if err != nil {
+		t.Fatalf("GetVMNetworkInterfaces error: %v", err)
+	}
+	if len(ifaces) != 1 {
+		t.Fatalf("expected 1 valid interface, got %d: %+v", len(ifaces), ifaces)
+	}
+	if len(ifaces[0].IPAddresses) != 2 {
+		t.Fatalf("expected 2 valid addresses, got %+v", ifaces[0].IPAddresses)
+	}
+	if ifaces[0].IPAddresses[0].Address != "192.168.10.20" || ifaces[0].IPAddresses[0].Prefix != 24 {
+		t.Fatalf("unexpected first address: %+v", ifaces[0].IPAddresses[0])
+	}
+	if ifaces[0].IPAddresses[1].Address != "2001:db8::10" || ifaces[0].IPAddresses[1].Prefix != 64 {
+		t.Fatalf("unexpected second address: %+v", ifaces[0].IPAddresses[1])
+	}
+}
+
+func TestClientVMNetworkInterfacesAcceptsSingleAddressObject(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/json/nodes/node1/qemu/100/agent/network-get-interfaces":
+			writeJSON(t, w, map[string]interface{}{
+				"data": map[string]interface{}{
+					"result": []map[string]interface{}{
+						{
+							"name": "eth0",
+							"ip-addresses": map[string]interface{}{
+								"ip-address": "10.1.2.3",
+								"prefix":     16,
+							},
+						},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	ifaces, err := client.GetVMNetworkInterfaces(context.Background(), "node1", 100)
+	if err != nil {
+		t.Fatalf("GetVMNetworkInterfaces error: %v", err)
+	}
+	if len(ifaces) != 1 || len(ifaces[0].IPAddresses) != 1 {
+		t.Fatalf("unexpected interfaces: %+v", ifaces)
+	}
+	if ifaces[0].IPAddresses[0].Address != "10.1.2.3" || ifaces[0].IPAddresses[0].Prefix != 16 {
+		t.Fatalf("unexpected address: %+v", ifaces[0].IPAddresses[0])
+	}
+}
+
 func TestClientStatusAndResources(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
