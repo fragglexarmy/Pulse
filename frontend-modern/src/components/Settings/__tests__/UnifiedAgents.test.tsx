@@ -204,6 +204,7 @@ describe('UnifiedAgents token generation', () => {
       expect(screen.getByText('Generate API token')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /Generate token/i })).toBeInTheDocument();
+    expect(screen.getByText(/Use one dedicated token per host or VM installation/i)).toBeInTheDocument();
   });
 
   it('generates a token and shows confirmation', async () => {
@@ -232,6 +233,7 @@ describe('UnifiedAgents token generation', () => {
       () => expect(screen.getByText(/Token.*created/i)).toBeInTheDocument(),
       { interval: 0 },
     );
+    expect(screen.getByText(/Install this token on one machine only/i)).toBeInTheDocument();
     expect(notificationSuccessMock).toHaveBeenCalledWith(
       'Token generated with Host config + reporting, Docker, and Kubernetes permissions.',
       4000,

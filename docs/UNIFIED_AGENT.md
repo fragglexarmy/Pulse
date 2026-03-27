@@ -178,6 +178,8 @@ These flags are accepted by the `pulse-agent` binary directly but are **not** av
 
 **Token resolution order**: `--token` → `--token-file` → `PULSE_TOKEN` → `/var/lib/pulse-agent/token`.
 
+Use one dedicated API token per host or VM installation. Reuse a token only when multiple agents intentionally share one logical identity, such as a Kubernetes DaemonSet configured with `PULSE_AGENT_ID`.
+
 ### Advanced Flags
 
 - `--version`: Print the agent version and exit.

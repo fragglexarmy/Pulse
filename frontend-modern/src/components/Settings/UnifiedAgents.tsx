@@ -1017,6 +1017,9 @@ export const UnifiedAgents: Component = () => {
                                 <p class="text-sm text-gray-600 dark:text-gray-400 ml-6">
                                     Create a fresh token scoped for Host, Docker, and Kubernetes monitoring.
                                 </p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 ml-6">
+                                    Use one dedicated token per host or VM installation. Only reuse a token when multiple agents intentionally share one identity, such as a Kubernetes DaemonSet with <code>PULSE_AGENT_ID</code>.
+                                </p>
                             </div>
 
                             <div class="flex gap-2">
@@ -1051,6 +1054,9 @@ export const UnifiedAgents: Component = () => {
                                         Token <strong>{latestRecord()?.name}</strong> created. Commands below now include this credential.
                                     </span>
                                 </div>
+                                <p class="text-xs text-blue-700 dark:text-blue-300 ml-6">
+                                    Install this token on one machine only. Generate another token for the next host unless you are deliberately using a shared identity.
+                                </p>
                             </Show>
 
                         </div>
