@@ -193,6 +193,46 @@ func TestClientVMFSInfoObjectResult(t *testing.T) {
 	}
 }
 
+func TestClientVMFSInfoSingleFilesystemObjectResult(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/json/nodes/node1/qemu/100/agent/get-fsinfo":
+			writeJSON(t, w, map[string]interface{}{
+				"data": map[string]interface{}{
+					"result": map[string]interface{}{
+						"name":                   "C:\\",
+						"type":                   "ntfs",
+						"mountpoint":             "",
+						"total-bytes":            500,
+						"used-bytes":             200,
+						"total-bytes-privileged": 500,
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	ctx := context.Background()
+	filesystems, err := client.GetVMFSInfo(ctx, "node1", 100)
+	if err != nil {
+		t.Fatalf("GetVMFSInfo error: %v", err)
+	}
+	if len(filesystems) != 1 {
+		t.Fatalf("expected 1 filesystem, got %d", len(filesystems))
+	}
+	if filesystems[0].Mountpoint != "C:\\" {
+		t.Fatalf("expected windows mountpoint fallback, got %q", filesystems[0].Mountpoint)
+	}
+	if filesystems[0].Disk != "C:" {
+		t.Fatalf("expected windows drive disk, got %q", filesystems[0].Disk)
+	}
+	if filesystems[0].TotalBytes != 500 || filesystems[0].UsedBytes != 200 {
+		t.Fatalf("unexpected filesystem totals: %+v", filesystems[0])
+	}
+}
+
 func TestClientVMFSInfoSkipsMalformedEntries(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

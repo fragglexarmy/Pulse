@@ -1633,26 +1633,52 @@ func (c *Client) GetVMFSInfo(ctx context.Context, node string, vmid int) ([]VMFi
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(bodyBytes, &objectResult); err == nil {
-		// If result is an object, it might be an error or empty response
-		// Check if it's null or an error
 		if objectResult.Data.Result == nil {
 			log.Debug().
 				Str("node", node).
 				Int("vmid", vmid).
 				Msg("GetVMFSInfo received null result - guest agent may not be providing disk info")
-		} else {
-			log.Debug().
-				Str("node", node).
-				Int("vmid", vmid).
-				Interface("result", objectResult.Data.Result).
-				Msg("GetVMFSInfo received object instead of array")
+			return []VMFileSystem{}, nil
 		}
-		// Return empty array to indicate no filesystem info available
+
+		if fsMap, ok := objectResult.Data.Result.(map[string]interface{}); ok && looksLikeVMFilesystemResult(fsMap) {
+			rawFS, marshalErr := json.Marshal(fsMap)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("failed to marshal object-style guest filesystem result: %w", marshalErr)
+			}
+			var fs VMFileSystem
+			if unmarshalErr := json.Unmarshal(rawFS, &fs); unmarshalErr != nil {
+				return nil, fmt.Errorf("failed to parse object-style guest filesystem result: %w", unmarshalErr)
+			}
+			filesystems := []VMFileSystem{fs}
+			postProcessVMFilesystems(node, vmid, filesystems)
+			return filesystems, nil
+		}
+
+		log.Debug().
+			Str("node", node).
+			Int("vmid", vmid).
+			Interface("result", objectResult.Data.Result).
+			Msg("GetVMFSInfo received object instead of array")
 		return []VMFileSystem{}, nil
 	}
 
 	// If both fail, return error
 	return nil, fmt.Errorf("unexpected response format from guest agent get-fsinfo")
+}
+
+func looksLikeVMFilesystemResult(result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+
+	for _, key := range []string{"mountpoint", "name", "type", "total-bytes", "total-bytes-privileged", "used-bytes", "disk"} {
+		if _, ok := result[key]; ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 func postProcessVMFilesystems(node string, vmid int, filesystems []VMFileSystem) {
