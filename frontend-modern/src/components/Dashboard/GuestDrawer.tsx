@@ -20,11 +20,6 @@ interface GuestDrawerProps {
 }
 
 export const GuestDrawer: Component<GuestDrawerProps> = (props) => {
-  const guestId = () => {
-    if (props.guest.id) return props.guest.id;
-    return `${props.guest.instance}:${props.guest.node}:${props.guest.vmid}`;
-  };
-
   const isVM = (guest: Guest): guest is VM => {
     return guest.type === 'qemu';
   };
@@ -106,6 +101,9 @@ export const GuestDrawer: Component<GuestDrawerProps> = (props) => {
     return { type, id };
   };
 
+  const historyRangeStorageKey = () =>
+    `guest:${isVM(props.guest) ? 'vm' : 'container'}:${props.guest.instance}:${props.guest.node}:${props.guest.vmid}`;
+
   const [activeTab, setActiveTab] = createSignal<'overview' | 'discovery'>('overview');
   const [discoveryActivated, setDiscoveryActivated] = createSignal(false);
 
@@ -120,9 +118,9 @@ export const GuestDrawer: Component<GuestDrawerProps> = (props) => {
     setActiveTab(tab);
   };
 
-  const [historyRange, setHistoryRange] = useDrawerHistoryRange(
-    `guest:${metricsResource().type}:${metricsResource().id}`,
-  );
+  const [historyRange, setHistoryRange] = useDrawerHistoryRange(historyRangeStorageKey(), {
+    fallbackKeys: [`guest:${metricsResource().type}:${metricsResource().id}`],
+  });
   const isHistoryLocked = () =>
     !hasFeature('long_term_metrics') && (historyRange() === '30d' || historyRange() === '90d');
 
@@ -584,9 +582,9 @@ export const GuestDrawer: Component<GuestDrawerProps> = (props) => {
               hostId={props.guest.node}
               resourceId={String(props.guest.vmid)}
               hostname={props.guest.name}
-              guestId={guestId()}
+              guestId={fallbackGuestId()}
               customUrl={props.customUrl}
-              onCustomUrlChange={(url) => props.onCustomUrlChange?.(guestId(), url)}
+              onCustomUrlChange={(url) => props.onCustomUrlChange?.(fallbackGuestId(), url)}
             />
           </Suspense>
         </Show>

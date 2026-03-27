@@ -18,6 +18,10 @@ export type PersistentSignalOptions<T> = {
    * Alternate storage implementation (defaults to `window.localStorage`).
    */
   storage?: Storage;
+  /**
+   * Older storage keys to read from and migrate away from when the primary key changes.
+   */
+  fallbackKeys?: string[];
 };
 
 /**
@@ -33,6 +37,7 @@ export function usePersistentSignal<T>(
     options.storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
   const serialize = options.serialize ?? ((value: T) => String(value));
   const deserialize = options.deserialize ?? ((value: string) => value as unknown as T);
+  const fallbackKeys = (options.fallbackKeys ?? []).filter((fallbackKey) => fallbackKey !== key);
 
   const initialValue = (() => {
     if (!storage) {
@@ -41,10 +46,18 @@ export function usePersistentSignal<T>(
 
     try {
       const raw = storage.getItem(key);
-      if (raw === null) {
-        return defaultValue;
+      if (raw !== null) {
+        return deserialize(raw);
       }
-      return deserialize(raw);
+
+      for (const fallbackKey of fallbackKeys) {
+        const fallbackRaw = storage.getItem(fallbackKey);
+        if (fallbackRaw !== null) {
+          return deserialize(fallbackRaw);
+        }
+      }
+
+      return defaultValue;
     } catch (err) {
       logger.warn(`[usePersistentSignal] Failed to read "${key}" from storage`, err);
       return defaultValue;
@@ -65,6 +78,9 @@ export function usePersistentSignal<T>(
         storage.removeItem(key);
       } else {
         storage.setItem(key, serialize(current));
+      }
+      for (const fallbackKey of fallbackKeys) {
+        storage.removeItem(fallbackKey);
       }
     } catch (err) {
       logger.warn(`[usePersistentSignal] Failed to persist "${key}"`, err);

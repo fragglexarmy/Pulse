@@ -17,13 +17,23 @@ function normaliseHistoryRange(value: string): HistoryTimeRange {
   return allowedHistoryRanges.has(value as HistoryTimeRange) ? (value as HistoryTimeRange) : '1h';
 }
 
-export function useDrawerHistoryRange(resourceKey: string) {
+interface DrawerHistoryRangeOptions {
+  fallbackKeys?: string[];
+}
+
+export function useDrawerHistoryRange(
+  resourceKey: string,
+  options: DrawerHistoryRangeOptions = {},
+) {
   return usePersistentSignal<HistoryTimeRange>(
     `${DRAWER_HISTORY_RANGE_PREFIX}.${resourceKey}`,
     '1h',
     {
       deserialize: normaliseHistoryRange,
       serialize: (value) => value,
+      fallbackKeys: options.fallbackKeys?.map(
+        (fallbackKey) => `${DRAWER_HISTORY_RANGE_PREFIX}.${fallbackKey}`,
+      ),
     },
   );
 }

@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HistoryTimeRange } from '@/api/charts';
 import { useDrawerHistoryRange } from '../useDrawerHistoryRange';
 
-const TestHarness: Component<{ resourceKey: string }> = (props) => {
-  const [historyRange, setHistoryRange] = useDrawerHistoryRange(props.resourceKey);
+const TestHarness: Component<{ resourceKey: string; fallbackKeys?: string[] }> = (props) => {
+  const [historyRange, setHistoryRange] = useDrawerHistoryRange(props.resourceKey, {
+    fallbackKeys: props.fallbackKeys,
+  });
 
   createEffect(() => {
     historyRange();
@@ -55,5 +57,20 @@ describe('useDrawerHistoryRange', () => {
 
     const view = render(() => <TestHarness resourceKey="host:host-1" />);
     expect((view.getByLabelText('History range') as HTMLSelectElement).value).toBe('1h');
+  });
+
+  it('migrates a stored range from a fallback resource key', async () => {
+    window.localStorage.setItem('pulse.drawerHistoryRange.guest:vm:old-id', '7d');
+
+    const view = render(() => (
+      <TestHarness resourceKey="guest:vm:instance-a:node-a:101" fallbackKeys={['guest:vm:old-id']} />
+    ));
+
+    expect((view.getByLabelText('History range') as HTMLSelectElement).value).toBe('7d');
+    await Promise.resolve();
+    expect(window.localStorage.getItem('pulse.drawerHistoryRange.guest:vm:instance-a:node-a:101')).toBe(
+      '7d',
+    );
+    expect(window.localStorage.getItem('pulse.drawerHistoryRange.guest:vm:old-id')).toBeNull();
   });
 });
