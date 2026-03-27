@@ -1587,60 +1587,30 @@ func (c *Client) GetVMFSInfo(ctx context.Context, node string, vmid int) ([]VMFi
 		Str("response", string(bodyBytes)).
 		Msg("Raw response from guest agent get-fsinfo")
 
-	// Try to unmarshal as an array first (expected format)
+	// Decode array payloads entry-by-entry so one malformed filesystem record
+	// does not wipe valid guest-agent disk data for the whole VM.
 	var arrayResult struct {
 		Data struct {
-			Result []VMFileSystem `json:"result"`
+			Result []json.RawMessage `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(bodyBytes, &arrayResult); err == nil && arrayResult.Data.Result != nil {
-		// Post-process to extract disk device names
-		for i := range arrayResult.Data.Result {
-			fs := &arrayResult.Data.Result[i]
-			// Extract disk device name from the DiskRaw field
-			if len(fs.DiskRaw) > 0 {
-				// The disk field usually contains device info as a map
-				if diskMap, ok := fs.DiskRaw[0].(map[string]interface{}); ok {
-					// Try to get the device name from various possible fields
-					if dev, ok := diskMap["dev"].(string); ok {
-						fs.Disk = dev
-					} else if serial, ok := diskMap["serial"].(string); ok {
-						fs.Disk = serial
-					} else if bus, ok := diskMap["bus-type"].(string); ok {
-						if target, ok := diskMap["target"].(float64); ok {
-							fs.Disk = fmt.Sprintf("%s-%d", bus, int(target))
-						}
-					}
-				}
+		filesystems := make([]VMFileSystem, 0, len(arrayResult.Data.Result))
+		for idx, rawFS := range arrayResult.Data.Result {
+			var fs VMFileSystem
+			if err := json.Unmarshal(rawFS, &fs); err != nil {
+				log.Warn().
+					Err(err).
+					Str("node", node).
+					Int("vmid", vmid).
+					Int("filesystem_index", idx).
+					Msg("Skipping malformed guest agent filesystem entry")
+				continue
 			}
-			// If we still don't have a disk identifier, use the normalized mountpoint as a fallback
-			if fs.Disk == "" && fs.Mountpoint != "" {
-				// For root filesystem, use a special identifier
-				if fs.Mountpoint == "/" {
-					fs.Disk = "root-filesystem"
-				} else {
-					// For Windows, normalize drive letters to prevent duplicate counting
-					// Windows guest agent can return multiple directory entries (C:, C:\, C:\Users, C:\Windows)
-					// all on the same physical drive. Without disk[] metadata, we must deduplicate by drive letter.
-					isWindowsDrive := len(fs.Mountpoint) >= 2 && fs.Mountpoint[1] == ':'
-					if isWindowsDrive {
-						// Use drive letter as identifier (e.g., "C:" for C:\, C:\Users, etc.)
-						driveLetter := strings.ToUpper(fs.Mountpoint[:2])
-						fs.Disk = driveLetter
-						log.Debug().
-							Str("node", node).
-							Int("vmid", vmid).
-							Str("mountpoint", fs.Mountpoint).
-							Str("synthesized_disk", driveLetter).
-							Msg("Synthesized Windows drive identifier from mountpoint")
-					} else {
-						// Use mountpoint as unique identifier for non-Windows paths
-						fs.Disk = fs.Mountpoint
-					}
-				}
-			}
+			filesystems = append(filesystems, fs)
 		}
-		return arrayResult.Data.Result, nil
+		postProcessVMFilesystems(node, vmid, filesystems)
+		return filesystems, nil
 	}
 
 	// If that fails, try as an object (might be an error response or different format)
@@ -1670,6 +1640,54 @@ func (c *Client) GetVMFSInfo(ctx context.Context, node string, vmid int) ([]VMFi
 
 	// If both fail, return error
 	return nil, fmt.Errorf("unexpected response format from guest agent get-fsinfo")
+}
+
+func postProcessVMFilesystems(node string, vmid int, filesystems []VMFileSystem) {
+	for i := range filesystems {
+		fs := &filesystems[i]
+		// Extract disk device name from the DiskRaw field
+		if len(fs.DiskRaw) > 0 {
+			// The disk field usually contains device info as a map
+			if diskMap, ok := fs.DiskRaw[0].(map[string]interface{}); ok {
+				// Try to get the device name from various possible fields
+				if dev, ok := diskMap["dev"].(string); ok {
+					fs.Disk = dev
+				} else if serial, ok := diskMap["serial"].(string); ok {
+					fs.Disk = serial
+				} else if bus, ok := diskMap["bus-type"].(string); ok {
+					if target, ok := diskMap["target"].(float64); ok {
+						fs.Disk = fmt.Sprintf("%s-%d", bus, int(target))
+					}
+				}
+			}
+		}
+		// If we still don't have a disk identifier, use the normalized mountpoint as a fallback
+		if fs.Disk == "" && fs.Mountpoint != "" {
+			// For root filesystem, use a special identifier
+			if fs.Mountpoint == "/" {
+				fs.Disk = "root-filesystem"
+			} else {
+				// For Windows, normalize drive letters to prevent duplicate counting
+				// Windows guest agent can return multiple directory entries (C:, C:\, C:\Users, C:\Windows)
+				// all on the same physical drive. Without disk[] metadata, we must deduplicate by drive letter.
+				isWindowsDrive := len(fs.Mountpoint) >= 2 && fs.Mountpoint[1] == ':'
+				if isWindowsDrive {
+					// Use drive letter as identifier (e.g., "C:" for C:\, C:\Users, etc.)
+					driveLetter := strings.ToUpper(fs.Mountpoint[:2])
+					fs.Disk = driveLetter
+					log.Debug().
+						Str("node", node).
+						Int("vmid", vmid).
+						Str("mountpoint", fs.Mountpoint).
+						Str("synthesized_disk", driveLetter).
+						Msg("Synthesized Windows drive identifier from mountpoint")
+				} else {
+					// Use mountpoint as unique identifier for non-Windows paths
+					fs.Disk = fs.Mountpoint
+				}
+			}
+		}
+	}
 }
 
 // GetVMNetworkInterfaces returns network interfaces reported by the guest agent

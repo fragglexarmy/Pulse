@@ -193,6 +193,52 @@ func TestClientVMFSInfoObjectResult(t *testing.T) {
 	}
 }
 
+func TestClientVMFSInfoSkipsMalformedEntries(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/json/nodes/node1/qemu/100/agent/get-fsinfo":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"result": [
+						{
+							"name": "windows",
+							"type": "ntfs",
+							"mountpoint": "C:\\Windows",
+							"total-bytes": 200,
+							"used-bytes": 20
+						},
+						{
+							"name": "broken",
+							"type": "ntfs",
+							"mountpoint": "D:\\Data",
+							"total-bytes": true,
+							"used-bytes": 10
+						}
+					]
+				}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	ctx := context.Background()
+	filesystems, err := client.GetVMFSInfo(ctx, "node1", 100)
+	if err != nil {
+		t.Fatalf("GetVMFSInfo error: %v", err)
+	}
+	if len(filesystems) != 1 {
+		t.Fatalf("expected 1 valid filesystem after skipping malformed entry, got %d", len(filesystems))
+	}
+	if filesystems[0].Mountpoint != "C:\\Windows" {
+		t.Fatalf("expected valid filesystem to remain, got mountpoint %q", filesystems[0].Mountpoint)
+	}
+	if filesystems[0].Disk != "C:" {
+		t.Fatalf("expected windows drive disk, got %q", filesystems[0].Disk)
+	}
+}
+
 func TestClientContainerInterfacesError(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
