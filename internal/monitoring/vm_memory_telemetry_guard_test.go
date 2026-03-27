@@ -216,3 +216,82 @@ func TestStabilizeSuspiciousRepeatedVMMemory_IgnoresTrustedPattern(t *testing.T)
 		t.Fatalf("memory source changed unexpectedly to %q", current[0].MemorySource)
 	}
 }
+
+func TestStabilizeSuspiciousRepeatedVMMemory_PreservesLowTrustFullUsageAcrossDifferentTotals(t *testing.T) {
+	now := time.Now()
+
+	current := []models.VM{
+		{
+			ID:           "vm1",
+			Name:         "vm1",
+			Type:         "qemu",
+			Status:       "running",
+			MemorySource: "status-mem",
+			Memory:       models.Memory{Total: 8 << 30, Used: 8 << 30, Usage: 100},
+			LastSeen:     now,
+		},
+		{
+			ID:           "vm2",
+			Name:         "vm2",
+			Type:         "qemu",
+			Status:       "running",
+			MemorySource: "status-mem",
+			Memory:       models.Memory{Total: 12 << 30, Used: 12 << 30, Usage: 100},
+			LastSeen:     now,
+		},
+		{
+			ID:           "vm3",
+			Name:         "vm3",
+			Type:         "qemu",
+			Status:       "running",
+			MemorySource: "status-mem",
+			Memory:       models.Memory{Total: 16 << 30, Used: 16 << 30, Usage: 100},
+			LastSeen:     now,
+		},
+		{
+			ID:           "vm4",
+			Name:         "vm4",
+			Type:         "qemu",
+			Status:       "running",
+			MemorySource: "rrd-memavailable",
+			Memory:       models.Memory{Total: 16 << 30, Used: 4 << 30, Free: 12 << 30, Usage: 25},
+			LastSeen:     now,
+		},
+	}
+	alertVMs := append([]models.VM(nil), current...)
+	snapshots := []GuestMemorySnapshot{
+		{Name: "vm1", Status: "running", RetrievedAt: now, MemorySource: "status-mem", Memory: current[0].Memory, Raw: VMMemoryRaw{StatusMem: 8 << 30}},
+		{Name: "vm2", Status: "running", RetrievedAt: now, MemorySource: "status-mem", Memory: current[1].Memory, Raw: VMMemoryRaw{StatusMem: 12 << 30}},
+		{Name: "vm3", Status: "running", RetrievedAt: now, MemorySource: "status-mem", Memory: current[2].Memory, Raw: VMMemoryRaw{StatusMem: 16 << 30}},
+		{Name: "vm4", Status: "running", RetrievedAt: now, MemorySource: "rrd-memavailable", Memory: current[3].Memory},
+	}
+	previous := []models.VM{
+		{ID: "vm1", Name: "vm1", Type: "qemu", Status: "running", MemorySource: "guest-agent-meminfo", Memory: models.Memory{Total: 8 << 30, Used: 3 << 30, Free: 5 << 30, Usage: 37.5}, LastSeen: now},
+		{ID: "vm2", Name: "vm2", Type: "qemu", Status: "running", MemorySource: "rrd-memavailable", Memory: models.Memory{Total: 12 << 30, Used: 5 << 30, Free: 7 << 30, Usage: 41.6667}, LastSeen: now},
+		{ID: "vm3", Name: "vm3", Type: "qemu", Status: "running", MemorySource: "previous-snapshot", Memory: models.Memory{Total: 16 << 30, Used: 6 << 30, Free: 10 << 30, Usage: 37.5}, LastSeen: now},
+	}
+
+	applied := stabilizeSuspiciousRepeatedVMMemory(current, alertVMs, snapshots, previous, now)
+	if applied != 3 {
+		t.Fatalf("applied = %d, want 3", applied)
+	}
+
+	if current[0].MemorySource != "previous-snapshot" || current[0].Memory.Used != 3<<30 {
+		t.Fatalf("vm1 memory = %#v source=%q, want preserved trusted reading", current[0].Memory, current[0].MemorySource)
+	}
+	if current[1].MemorySource != "previous-snapshot" || current[1].Memory.Used != 5<<30 {
+		t.Fatalf("vm2 memory = %#v source=%q, want preserved trusted reading", current[1].Memory, current[1].MemorySource)
+	}
+	if current[2].MemorySource != "previous-snapshot" || current[2].Memory.Used != 6<<30 {
+		t.Fatalf("vm3 memory = %#v source=%q, want preserved previous snapshot", current[2].Memory, current[2].MemorySource)
+	}
+	if current[3].MemorySource != "rrd-memavailable" {
+		t.Fatalf("vm4 should stay trusted, got source=%q", current[3].MemorySource)
+	}
+	if !snapshotHasNote(snapshots[0].Notes, "preserved-previous-memory-after-repeated-low-trust-pattern") {
+		t.Fatalf("expected stabilization note on vm1 snapshot, got %#v", snapshots[0].Notes)
+	}
+	if alertVMs[1].Memory.Used != current[1].Memory.Used || alertVMs[1].MemorySource != "previous-snapshot" {
+		t.Fatalf("alert VM not stabilized: %#v source=%q", alertVMs[1].Memory, alertVMs[1].MemorySource)
+	}
+}

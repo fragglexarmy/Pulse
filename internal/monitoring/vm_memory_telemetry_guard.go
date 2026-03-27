@@ -20,6 +20,7 @@ const (
 type repeatedVMMemoryUsage struct {
 	suspicious      bool
 	signature       string
+	pattern         string
 	runningCount    int
 	repeatedCount   int
 	repeatedMemUsed int64
@@ -103,6 +104,7 @@ func detectRepeatedVMMemoryUsage(vms []models.VM) repeatedVMMemoryUsage {
 	return repeatedVMMemoryUsage{
 		suspicious:      true,
 		signature:       fmt.Sprintf("%d:%d:%s", topUsed, topGroup.count, strings.Join(breakdown, ",")),
+		pattern:         "exact-used",
 		runningCount:    runningCount,
 		repeatedCount:   topGroup.count,
 		repeatedMemUsed: topUsed,
@@ -134,8 +136,78 @@ func formatMemorySourceBreakdown(counts map[string]int) []string {
 	return breakdown
 }
 
+func detectRepeatedLowTrustFullUsage(vms []models.VM, snapshots []GuestMemorySnapshot) repeatedVMMemoryUsage {
+	if len(vms) == 0 {
+		return repeatedVMMemoryUsage{}
+	}
+	hasSnapshots := len(vms) == len(snapshots)
+
+	runningCount := 0
+	repeatedCount := 0
+	sourceCounts := make(map[string]int)
+	sampleNames := make([]string, 0, maxRepeatedMemorySampleNames)
+
+	for i := range vms {
+		vm := vms[i]
+		if vm.Type != "qemu" || vm.Status != "running" || vm.Memory.Total <= 0 {
+			continue
+		}
+		runningCount++
+
+		source := strings.TrimSpace(vm.MemorySource)
+		if hasSnapshots {
+			used, candidateSource, ok := lowTrustMemoryCandidate(vm, snapshots[i])
+			if !ok || used <= 0 {
+				continue
+			}
+			source = candidateSource
+		} else if vmMemorySourceReliability(source) > vmMemorySourceReliabilityFallback {
+			continue
+		}
+
+		if vm.Memory.Usage < 99 || vmMemorySourceReliability(source) > vmMemorySourceReliabilityFallback {
+			continue
+		}
+
+		repeatedCount++
+		sourceCounts[source]++
+		if len(sampleNames) < maxRepeatedMemorySampleNames {
+			name := strings.TrimSpace(vm.Name)
+			if name == "" {
+				name = vm.ID
+			}
+			sampleNames = append(sampleNames, name)
+		}
+	}
+
+	if runningCount < minRunningVMsForRepeatedMemoryCheck {
+		return repeatedVMMemoryUsage{runningCount: runningCount}
+	}
+
+	share := float64(repeatedCount) / float64(runningCount)
+	if repeatedCount < minRepeatedVMsForSuspicion || share < minRepeatedMemoryShare {
+		return repeatedVMMemoryUsage{runningCount: runningCount}
+	}
+
+	breakdown := formatMemorySourceBreakdown(sourceCounts)
+	sort.Strings(sampleNames)
+
+	return repeatedVMMemoryUsage{
+		suspicious:      true,
+		signature:       fmt.Sprintf("full-usage:%d:%s", repeatedCount, strings.Join(breakdown, ",")),
+		pattern:         "low-trust-full-usage",
+		runningCount:    runningCount,
+		repeatedCount:   repeatedCount,
+		sourceBreakdown: breakdown,
+		sampleVMNames:   sampleNames,
+	}
+}
+
 func (m *Monitor) logSuspiciousRepeatedVMMemoryUsage(instanceName string, currentVMs []models.VM, previousVMs []models.VM) {
 	current := detectRepeatedVMMemoryUsage(currentVMs)
+	if !current.suspicious {
+		current = detectRepeatedLowTrustFullUsage(currentVMs, nil)
+	}
 	if !current.suspicious {
 		return
 	}
@@ -147,6 +219,7 @@ func (m *Monitor) logSuspiciousRepeatedVMMemoryUsage(instanceName string, curren
 
 	log.Warn().
 		Str("instance", instanceName).
+		Str("pattern", current.pattern).
 		Int("runningVMs", current.runningCount).
 		Int("repeatedVMs", current.repeatedCount).
 		Int64("repeatedMemoryUsedBytes", current.repeatedMemUsed).
@@ -161,6 +234,9 @@ func stabilizeSuspiciousRepeatedVMMemory(vms []models.VM, alertVMs []models.VM, 
 		current = detectRepeatedVMMemoryUsage(vms)
 	}
 	if !current.suspicious {
+		current = detectRepeatedLowTrustFullUsage(vms, snapshots)
+	}
+	if !current.suspicious {
 		return 0
 	}
 
@@ -172,11 +248,21 @@ func stabilizeSuspiciousRepeatedVMMemory(vms []models.VM, alertVMs []models.VM, 
 	applied := 0
 	for i := range vms {
 		vm := &vms[i]
-		if vm.Type != "qemu" || vm.Status != "running" || vm.Memory.Total <= 0 || vm.Memory.Used != current.repeatedMemUsed {
+		if vm.Type != "qemu" || vm.Status != "running" || vm.Memory.Total <= 0 {
 			continue
 		}
 		if vmMemorySourceReliability(vm.MemorySource) > vmMemorySourceReliabilityFallback {
 			continue
+		}
+		switch current.pattern {
+		case "low-trust-full-usage":
+			if vm.Memory.Usage < 99 {
+				continue
+			}
+		default:
+			if vm.Memory.Used != current.repeatedMemUsed {
+				continue
+			}
 		}
 
 		prev, ok := prevByID[vm.ID]
@@ -210,6 +296,7 @@ func stabilizeSuspiciousRepeatedVMMemory(vms []models.VM, alertVMs []models.VM, 
 	}
 
 	log.Warn().
+		Str("pattern", current.pattern).
 		Int("runningVMs", current.runningCount).
 		Int("repeatedVMs", current.repeatedCount).
 		Int("stabilizedVMs", applied).
