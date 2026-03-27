@@ -117,6 +117,91 @@ func TestListBlockDevices(t *testing.T) {
 	}
 }
 
+func TestParseSmartctlScanOpenTargets(t *testing.T) {
+	output := []byte(strings.Join([]string{
+		`/dev/sda -d sat # /dev/sda, ATA device`,
+		`/dev/sda # duplicate plain path should be ignored when typed target exists`,
+		`/dev/bsg/sssraid0 -d sssraid,0,1 # controller-backed disk`,
+		`/dev/sdb -d megaraid,0 # megaraid slot 0`,
+		`/dev/sdb -d megaraid,1 # megaraid slot 1`,
+		`/dev/sdc # plain disk`,
+		``,
+	}, "\n"))
+
+	targets := parseSmartctlScanOpenTargets(output, []string{"sdc"})
+	if len(targets) != 4 {
+		t.Fatalf("expected 4 targets, got %#v", targets)
+	}
+
+	if targets[0].Path != "/dev/sda" || targets[0].DeviceType != "sat" {
+		t.Fatalf("unexpected first target: %#v", targets[0])
+	}
+	if targets[1].Path != "/dev/bsg/sssraid0" || targets[1].DeviceType != "sssraid,0,1" {
+		t.Fatalf("unexpected second target: %#v", targets[1])
+	}
+	if targets[2].DeviceType != "megaraid,0" || targets[3].DeviceType != "megaraid,1" {
+		t.Fatalf("expected megaraid targets to be preserved separately, got %#v", targets)
+	}
+}
+
+func TestCollectLocalUsesSmartctlScanOpenTargetsOnLinux(t *testing.T) {
+	origRun := runCommandOutput
+	origLook := execLookPath
+	origGOOS := runtimeGOOS
+	t.Cleanup(func() {
+		runCommandOutput = origRun
+		execLookPath = origLook
+		runtimeGOOS = origGOOS
+	})
+
+	runtimeGOOS = "linux"
+	execLookPath = func(string) (string, error) { return "smartctl", nil }
+
+	var seenArgs [][]string
+	runCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		seenArgs = append(seenArgs, append([]string(nil), args...))
+
+		if len(args) == 1 && args[0] == "--scan-open" {
+			return []byte("/dev/sda -d megaraid,7 # RAID-backed SSD\n"), nil
+		}
+
+		payload := smartctlJSON{
+			ModelName:    "RAID SSD",
+			SerialNumber: "raid-ssd-1",
+		}
+		payload.Device.Protocol = "NVMe"
+		payload.SmartStatus = &struct {
+			Passed bool `json:"passed"`
+		}{Passed: true}
+		payload.NVMeSmartHealthInformationLog.PercentageUsed = 6
+		payload.NVMeSmartHealthInformationLog.AvailableSpare = 94
+		out, _ := json.Marshal(payload)
+		return out, nil
+	}
+
+	result, err := CollectLocal(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("CollectLocal error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %#v", result)
+	}
+	if result[0].Device != "sda [megaraid,7]" {
+		t.Fatalf("unexpected device label: %#v", result[0])
+	}
+	if result[0].Attributes == nil || result[0].Attributes.PercentageUsed == nil || *result[0].Attributes.PercentageUsed != 6 {
+		t.Fatalf("expected percentage_used SMART data, got %#v", result[0].Attributes)
+	}
+
+	if len(seenArgs) < 2 {
+		t.Fatalf("expected scan and probe calls, got %v", seenArgs)
+	}
+	probe := seenArgs[1]
+	if len(probe) < 3 || probe[0] != "-d" || probe[1] != "megaraid,7" || probe[len(probe)-1] != "/dev/sda" {
+		t.Fatalf("expected typed smartctl probe, got %v", probe)
+	}
+}
+
 func TestListBlockDevicesFreeBSD(t *testing.T) {
 	origRun := runCommandOutput
 	origReadDir := readDir

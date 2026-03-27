@@ -425,10 +425,34 @@ func mergeHostAgentSMARTIntoDisks(disks []models.PhysicalDisk, nodes []models.No
 		// Always merge SMART attributes from host agent
 		if matched.Attributes != nil {
 			updated[i].SmartAttributes = matched.Attributes
+			if updated[i].Wearout < 0 {
+				if derivedWearout := deriveWearoutFromSMARTAttributes(matched.Attributes); derivedWearout >= 0 {
+					updated[i].Wearout = derivedWearout
+				}
+			}
+		}
+
+		if (updated[i].Health == "" || strings.EqualFold(updated[i].Health, "unknown")) && matched.Health != "" {
+			updated[i].Health = matched.Health
 		}
 	}
 
 	return updated
+}
+
+func deriveWearoutFromSMARTAttributes(attrs *models.SMARTAttributes) int {
+	if attrs == nil || attrs.PercentageUsed == nil {
+		return -1
+	}
+
+	used := *attrs.PercentageUsed
+	if used < 0 {
+		used = 0
+	}
+	if used > 100 {
+		used = 100
+	}
+	return 100 - used
 }
 
 func proxmoxDiskMatchesExclude(disk proxmox.Disk, excludePatterns []string) bool {
@@ -6990,15 +7014,30 @@ func (m *Monitor) pollPVEInstance(ctx context.Context, instanceName string, clie
 					// Mark this node as successfully polled
 					polledNodes[node.Node] = true
 
-					allDisks = append(allDisks,
-						m.buildPhysicalDisksForNode(
-							inst,
-							node.Node,
-							disks,
-							diskExcludeByNode[node.Node],
-							time.Now(),
-						)...,
+					nodeDisks := m.buildPhysicalDisksForNode(
+						inst,
+						node.Node,
+						disks,
+						diskExcludeByNode[node.Node],
+						time.Now(),
 					)
+					nodeDisks = mergeHostAgentSMARTIntoDisks(nodeDisks, currentState.Nodes, currentState.Hosts)
+					for _, disk := range nodeDisks {
+						m.alertManager.CheckDiskHealth(inst, disk.Node, proxmox.Disk{
+							DevPath: disk.DevPath,
+							Model:   disk.Model,
+							Serial:  disk.Serial,
+							Type:    disk.Type,
+							Health:  disk.Health,
+							Wearout: disk.Wearout,
+							Size:    disk.Size,
+							RPM:     disk.RPM,
+							Used:    disk.Used,
+							WWN:     disk.WWN,
+						})
+					}
+
+					allDisks = append(allDisks, nodeDisks...)
 				}
 
 				// Preserve existing disk data for nodes that weren't polled (offline or error)

@@ -445,7 +445,7 @@ func TestParseSMARTOutputStandbyPowerMode(t *testing.T) {
 		t.Fatalf("marshal payload: %v", err)
 	}
 
-	result, err := parseSMARTOutput(out, "/dev/ada0")
+	result, err := parseSMARTOutput(out, smartctlTarget{Path: "/dev/ada0"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

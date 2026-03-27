@@ -77,6 +77,54 @@ func TestMonitor_GetStateRefreshesAlertSnapshots(t *testing.T) {
 	}
 }
 
+func TestMergeHostAgentSMARTIntoDisksDerivesWearoutAndHealth(t *testing.T) {
+	disks := []models.PhysicalDisk{{
+		ID:       "disk-1",
+		Node:     "node1",
+		Instance: "inst",
+		DevPath:  "/dev/sda",
+		Model:    "RAID SSD",
+		Serial:   "raid-serial-1",
+		Health:   "UNKNOWN",
+		Wearout:  -1,
+	}}
+	nodes := []models.Node{{
+		ID:                "node-1",
+		Name:              "node1",
+		Instance:          "inst",
+		LinkedHostAgentID: "host-1",
+	}}
+	used := 7
+	hosts := []models.Host{{
+		ID: "host-1",
+		Sensors: models.HostSensorSummary{
+			SMART: []models.HostDiskSMART{{
+				Device: "/dev/bsg/sssraid0 [sssraid,0,1]",
+				Model:  "RAID SSD",
+				Serial: "raid-serial-1",
+				Health: "PASSED",
+				Attributes: &models.SMARTAttributes{
+					PercentageUsed: &used,
+				},
+			}},
+		},
+	}}
+
+	merged := mergeHostAgentSMARTIntoDisks(disks, nodes, hosts)
+	if len(merged) != 1 {
+		t.Fatalf("expected 1 merged disk, got %#v", merged)
+	}
+	if merged[0].Wearout != 93 {
+		t.Fatalf("expected derived wearout 93, got %#v", merged[0])
+	}
+	if merged[0].Health != "PASSED" {
+		t.Fatalf("expected SMART health to fill UNKNOWN disk health, got %#v", merged[0])
+	}
+	if merged[0].SmartAttributes == nil || merged[0].SmartAttributes.PercentageUsed == nil || *merged[0].SmartAttributes.PercentageUsed != 7 {
+		t.Fatalf("expected SMART attributes to be merged, got %#v", merged[0].SmartAttributes)
+	}
+}
+
 func TestMonitor_Stop_Extra(t *testing.T) {
 	m := &Monitor{}
 	m.Stop()

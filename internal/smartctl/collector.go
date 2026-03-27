@@ -128,6 +128,22 @@ type lsblkDevice struct {
 	Subsystems string `json:"subsystems"`
 }
 
+type smartctlTarget struct {
+	Path       string
+	DeviceType string
+}
+
+func (t smartctlTarget) displayName() string {
+	name := filepath.Base(strings.TrimSpace(t.Path))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = strings.TrimSpace(t.Path)
+	}
+	if t.DeviceType == "" {
+		return name
+	}
+	return name + " [" + t.DeviceType + "]"
+}
+
 var linuxSMARTVirtualPrefixes = []string{
 	"dm-",
 	"drbd",
@@ -167,22 +183,21 @@ var linuxSMARTVirtualSubsystemTokens = []string{
 // CollectLocal collects S.M.A.R.T. data from all local block devices.
 // The diskExclude parameter specifies patterns for devices to skip (e.g., "sda", "/dev/nvme*", "*cache*").
 func CollectLocal(ctx context.Context, diskExclude []string) ([]DiskSMART, error) {
-	// List block devices
-	devices, err := listBlockDevices(ctx, diskExclude)
+	targets, err := listSMARTTargets(ctx, diskExclude)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to list block devices for SMART collection")
 		return nil, err
 	}
 
-	if len(devices) == 0 {
+	if len(targets) == 0 {
 		return nil, nil
 	}
 
 	var results []DiskSMART
-	for _, dev := range devices {
-		smart, err := collectDeviceSMART(ctx, dev)
+	for _, target := range targets {
+		smart, err := collectSMARTTarget(ctx, target)
 		if err != nil {
-			log.Debug().Err(err).Str("device", dev).Msg("Failed to collect SMART data for device")
+			log.Debug().Err(err).Str("device", target.displayName()).Msg("Failed to collect SMART data for device")
 			continue
 		}
 		if smart != nil {
@@ -191,6 +206,129 @@ func CollectLocal(ctx context.Context, diskExclude []string) ([]DiskSMART, error
 	}
 
 	return results, nil
+}
+
+func listSMARTTargets(ctx context.Context, diskExclude []string) ([]smartctlTarget, error) {
+	if runtimeGOOS == "linux" {
+		return listSMARTTargetsLinux(ctx, diskExclude)
+	}
+
+	devices, err := listBlockDevices(ctx, diskExclude)
+	if err != nil {
+		return nil, err
+	}
+	return smartctlTargetsFromDevices(devices), nil
+}
+
+func smartctlTargetsFromDevices(devices []string) []smartctlTarget {
+	if len(devices) == 0 {
+		return nil
+	}
+	targets := make([]smartctlTarget, 0, len(devices))
+	for _, device := range devices {
+		targets = append(targets, smartctlTarget{Path: device})
+	}
+	return targets
+}
+
+func listSMARTTargetsLinux(ctx context.Context, diskExclude []string) ([]smartctlTarget, error) {
+	targets, err := listSMARTTargetsLinuxFromScanOpen(ctx, diskExclude)
+	if err == nil && len(targets) > 0 {
+		return targets, nil
+	}
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to enumerate Linux SMART targets via smartctl --scan-open, falling back to block device discovery")
+	}
+
+	devices, fallbackErr := listBlockDevicesLinux(ctx, diskExclude)
+	if fallbackErr != nil {
+		return nil, fallbackErr
+	}
+	return smartctlTargetsFromDevices(devices), nil
+}
+
+func listSMARTTargetsLinuxFromScanOpen(ctx context.Context, diskExclude []string) ([]smartctlTarget, error) {
+	smartctlPath, err := execLookPath("smartctl")
+	if err != nil {
+		return nil, err
+	}
+
+	output, err := runCommandOutput(ctx, smartctlPath, "--scan-open")
+	if err != nil {
+		return nil, err
+	}
+
+	return parseSmartctlScanOpenTargets(output, diskExclude), nil
+}
+
+func parseSmartctlScanOpenTargets(output []byte, diskExclude []string) []smartctlTarget {
+	lines := strings.Split(string(output), "\n")
+	targets := make([]smartctlTarget, 0, len(lines))
+	typedByPath := make(map[string]bool)
+	seen := make(map[string]struct{})
+
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		if idx := strings.Index(line, "#"); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+
+		path := strings.TrimSpace(fields[0])
+		if path == "" || (!strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "-")) {
+			continue
+		}
+
+		deviceType := ""
+		for i := 1; i < len(fields)-1; i++ {
+			if fields[i] == "-d" {
+				deviceType = strings.TrimSpace(fields[i+1])
+				break
+			}
+		}
+
+		name := filepath.Base(path)
+		if matchesDeviceExclude(name, path, diskExclude) {
+			continue
+		}
+
+		key := path + "\x00" + deviceType
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if deviceType != "" {
+			typedByPath[path] = true
+		}
+
+		targets = append(targets, smartctlTarget{
+			Path:       path,
+			DeviceType: deviceType,
+		})
+	}
+
+	if len(targets) == 0 {
+		return nil
+	}
+
+	filtered := make([]smartctlTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.DeviceType == "" && typedByPath[target.Path] {
+			continue
+		}
+		filtered = append(filtered, target)
+	}
+	return filtered
 }
 
 // listBlockDevices returns a list of block devices suitable for SMART queries.
@@ -540,6 +678,10 @@ func matchesDeviceExclude(name, devicePath string, excludePatterns []string) boo
 
 // collectDeviceSMART runs smartctl on a single device and parses the result.
 func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) {
+	return collectSMARTTarget(ctx, smartctlTarget{Path: device})
+}
+
+func collectSMARTTarget(ctx context.Context, target smartctlTarget) (*DiskSMART, error) {
 	// Use timeout to avoid hanging on slow/unresponsive disks
 	cmdCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -550,7 +692,7 @@ func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) 
 		return nil, err
 	}
 
-	attempts := smartctlProbeAttempts(device)
+	attempts := smartctlProbeAttempts(target)
 	var firstParsed *DiskSMART
 	var firstStandby *DiskSMART
 	var lastErr error
@@ -563,11 +705,11 @@ func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) 
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				if exitErr.ExitCode() == smartctlStandbyExitStatus && len(output) == 0 {
 					standbyResult := &DiskSMART{
-						Device:      filepath.Base(device),
+						Device:      target.displayName(),
 						Standby:     true,
 						LastUpdated: timeNow(),
 					}
-					if runtimeGOOS == "freebsd" && i < len(attempts)-1 {
+					if runtimeGOOS == "freebsd" && i < len(attempts)-1 && target.DeviceType == "" {
 						if firstStandby == nil {
 							firstStandby = standbyResult
 						}
@@ -585,7 +727,7 @@ func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) 
 			}
 		}
 
-		result, parseErr := parseSMARTOutput(output, device)
+		result, parseErr := parseSMARTOutput(output, target)
 		if parseErr != nil {
 			lastErr = parseErr
 			continue
@@ -593,7 +735,7 @@ func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) 
 		if firstParsed == nil {
 			firstParsed = result
 		}
-		if !shouldRetryFreeBSDSMART(device, result, i, len(attempts)) {
+		if !shouldRetryFreeBSDSMART(target.Path, result, i, len(attempts)) {
 			log.Debug().
 				Str("device", result.Device).
 				Str("model", result.Model).
@@ -628,7 +770,14 @@ func collectDeviceSMART(ctx context.Context, device string) (*DiskSMART, error) 
 	return nil, nil
 }
 
-func smartctlProbeAttempts(device string) [][]string {
+func smartctlProbeAttempts(target smartctlTarget) [][]string {
+	device := target.Path
+	if target.DeviceType != "" {
+		return [][]string{
+			smartctlArgs(device, target.DeviceType),
+		}
+	}
+
 	if runtimeGOOS == "freebsd" {
 		deviceTypes := freeBSDSmartctlDeviceTypes(filepath.Base(device))
 		if len(deviceTypes) > 0 {
@@ -681,14 +830,14 @@ func shouldRetryFreeBSDSMART(device string, result *DiskSMART, attemptIndex, att
 	return len(freeBSDSmartctlDeviceTypes(filepath.Base(device))) > 0
 }
 
-func parseSMARTOutput(output []byte, device string) (*DiskSMART, error) {
+func parseSMARTOutput(output []byte, target smartctlTarget) (*DiskSMART, error) {
 	var smartData smartctlJSON
 	if err := json.Unmarshal(output, &smartData); err != nil {
 		return nil, err
 	}
 
 	result := &DiskSMART{
-		Device:      filepath.Base(device),
+		Device:      target.displayName(),
 		Model:       smartData.ModelName,
 		Serial:      smartData.SerialNumber,
 		Type:        detectDiskType(smartData),
