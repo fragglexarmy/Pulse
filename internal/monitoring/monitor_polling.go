@@ -217,6 +217,7 @@ func matchZFSPoolForStorage(storage models.Storage, zfsPoolMap map[string]*model
 	}
 
 	candidates := []string{
+		storage.Pool,
 		storage.Name,
 		storage.Path,
 	}
@@ -1602,6 +1603,7 @@ func (m *Monitor) pollStorageWithNodes(ctx context.Context, instanceName string,
 					Instance: storageInstanceName,
 					Type:     storage.Type,
 					Status:   "available",
+					Pool:     storage.Pool,
 					Path:     storage.Path,
 					Total:    int64(storage.Total),
 					Used:     int64(storage.Used),
@@ -1616,6 +1618,9 @@ func (m *Monitor) pollStorageWithNodes(ctx context.Context, instanceName string,
 				if hasClusterConfig {
 					if nodes := parseClusterStorageNodes(clusterConfig.Nodes); len(nodes) > 0 {
 						modelStorage.Nodes = nodes
+					}
+					if modelStorage.Pool == "" && clusterConfig.Pool != "" {
+						modelStorage.Pool = clusterConfig.Pool
 					}
 					if modelStorage.Path == "" && clusterConfig.Path != "" {
 						modelStorage.Path = clusterConfig.Path

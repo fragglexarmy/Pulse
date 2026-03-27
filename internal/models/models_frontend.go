@@ -487,6 +487,7 @@ type StorageFrontend struct {
 	NodeCount int      `json:"nodeCount,omitempty"`
 	Type      string   `json:"type"`
 	Status    string   `json:"status"`
+	Pool      string   `json:"pool,omitempty"`
 	Total     int64    `json:"total"`
 	Used      int64    `json:"used"`
 	Avail     int64    `json:"avail"` // Maps to Free
@@ -496,6 +497,7 @@ type StorageFrontend struct {
 	Shared    bool     `json:"shared"`
 	Enabled   bool     `json:"enabled"`
 	Active    bool     `json:"active"`
+	ZFSPool   *ZFSPool `json:"zfsPool,omitempty"`
 }
 
 // CephClusterFrontend represents a Ceph cluster with frontend-friendly field names
