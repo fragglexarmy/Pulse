@@ -90,6 +90,41 @@ func (*identityThenNetworkGuestMetadataClient) GetVMAgentVersion(ctx context.Con
 	return "8.2.2", nil
 }
 
+type ipOnlyThenNetworkGuestMetadataClient struct {
+	stubPVEClient
+	networkCalls int
+}
+
+func (c *ipOnlyThenNetworkGuestMetadataClient) GetVMNetworkInterfaces(ctx context.Context, node string, vmid int) ([]proxmox.VMNetworkInterface, error) {
+	c.networkCalls++
+	if c.networkCalls == 1 {
+		return []proxmox.VMNetworkInterface{
+			{
+				IPAddresses: []proxmox.VMIpAddress{
+					{Address: "192.168.1.60", Prefix: 24},
+				},
+			},
+		}, nil
+	}
+	return []proxmox.VMNetworkInterface{
+		{
+			Name:         "Ethernet0",
+			HardwareAddr: "00:11:22:33:44:66",
+			IPAddresses: []proxmox.VMIpAddress{
+				{Address: "192.168.1.60", Prefix: 24},
+			},
+		},
+	}, nil
+}
+
+func (*ipOnlyThenNetworkGuestMetadataClient) GetVMAgentInfo(ctx context.Context, node string, vmid int) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+
+func (*ipOnlyThenNetworkGuestMetadataClient) GetVMAgentVersion(ctx context.Context, node string, vmid int) (string, error) {
+	return "", nil
+}
+
 func TestGuestMetadataCacheKey(t *testing.T) {
 	t.Parallel()
 
@@ -969,8 +1004,18 @@ func TestGuestMetadataCacheEntryTTL(t *testing.T) {
 			name: "network metadata uses full ttl",
 			entry: guestMetadataCacheEntry{
 				ipAddresses: []string{"192.168.1.10"},
+				networkInterfaces: []models.GuestNetworkInterface{
+					{Name: "eth0", Addresses: []string{"192.168.1.10"}},
+				},
 			},
 			want: guestMetadataCacheTTL,
+		},
+		{
+			name: "ip-only metadata retries quickly",
+			entry: guestMetadataCacheEntry{
+				ipAddresses: []string{"192.168.1.10"},
+			},
+			want: guestMetadataEmptyTTL,
 		},
 		{
 			name: "identity-only metadata retries quickly",
@@ -1044,6 +1089,62 @@ func TestFetchGuestAgentMetadataRetriesIdentityOnlyCacheSooner(t *testing.T) {
 	if secondOSName != firstOSName || secondOSVersion != firstOSVersion || secondAgentVersion != firstAgentVersion {
 		t.Fatalf("expected identity metadata to be preserved, got os=%q/%q agent=%q want os=%q/%q agent=%q",
 			secondOSName, secondOSVersion, secondAgentVersion, firstOSName, firstOSVersion, firstAgentVersion)
+	}
+}
+
+func TestFetchGuestAgentMetadataRetriesIPOnlyCacheSooner(t *testing.T) {
+	t.Parallel()
+
+	client := &ipOnlyThenNetworkGuestMetadataClient{}
+	monitor := &Monitor{
+		guestMetadataCache:   make(map[string]guestMetadataCacheEntry),
+		guestMetadataLimiter: make(map[string]time.Time),
+	}
+
+	status := &proxmox.VMStatus{Agent: proxmox.VMAgentField{Value: 1}}
+
+	firstIPs, firstIfaces, _, _, _ := monitor.fetchGuestAgentMetadata(
+		context.Background(),
+		client,
+		"pve",
+		"node1",
+		"vm100",
+		100,
+		status,
+	)
+	if len(firstIPs) != 1 || firstIPs[0] != "192.168.1.60" {
+		t.Fatalf("expected first fetch to preserve discovered IP, got %#v", firstIPs)
+	}
+	if len(firstIfaces) != 0 {
+		t.Fatalf("expected first fetch to remain interface-incomplete, got %#v", firstIfaces)
+	}
+
+	key := guestMetadataCacheKey("pve", "node1", 100)
+	entry := monitor.guestMetadataCache[key]
+	if got := guestMetadataCacheEntryTTL(entry); got != guestMetadataEmptyTTL {
+		t.Fatalf("guestMetadataCacheEntryTTL(ip-only) = %s, want %s", got, guestMetadataEmptyTTL)
+	}
+	entry.fetchedAt = time.Now().Add(-guestMetadataEmptyTTL - time.Second)
+	monitor.guestMetadataCache[key] = entry
+	monitor.guestMetadataLimiter[key] = time.Now().Add(-time.Second)
+
+	secondIPs, secondIfaces, _, _, _ := monitor.fetchGuestAgentMetadata(
+		context.Background(),
+		client,
+		"pve",
+		"node1",
+		"vm100",
+		100,
+		status,
+	)
+	if len(secondIPs) != 1 || secondIPs[0] != "192.168.1.60" {
+		t.Fatalf("expected second fetch to preserve IP, got %#v", secondIPs)
+	}
+	if len(secondIfaces) != 1 || secondIfaces[0].Name != "Ethernet0" {
+		t.Fatalf("expected second fetch to populate interfaces, got %#v", secondIfaces)
+	}
+	if client.networkCalls != 2 {
+		t.Fatalf("expected network metadata to be fetched twice, got %d calls", client.networkCalls)
 	}
 }
 

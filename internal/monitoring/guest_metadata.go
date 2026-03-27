@@ -56,14 +56,19 @@ func guestMetadataCacheHasUsefulData(entry guestMetadataCacheEntry) bool {
 		entry.agentVersion != ""
 }
 
+func guestMetadataCacheHasCompleteNetworkData(entry guestMetadataCacheEntry) bool {
+	return len(entry.networkInterfaces) > 0
+}
+
 func guestMetadataCacheHasNetworkData(entry guestMetadataCacheEntry) bool {
 	return len(entry.ipAddresses) > 0 || len(entry.networkInterfaces) > 0
 }
 
 func guestMetadataCacheEntryTTL(entry guestMetadataCacheEntry) time.Duration {
-	// Treat identity-only metadata as incomplete so VMs that answered
-	// guest-info/version but not network-interfaces are retried soon.
-	if guestMetadataCacheHasNetworkData(entry) {
+	// Treat identity-only and IP-only metadata as incomplete so VMs that answered
+	// guest-info/version or partial network calls but not full interface inventory
+	// are retried soon instead of freezing incomplete VM Summary data for minutes.
+	if guestMetadataCacheHasCompleteNetworkData(entry) {
 		return guestMetadataCacheTTL
 	}
 	return guestMetadataEmptyTTL
@@ -115,7 +120,7 @@ func (m *Monitor) scheduleGuestMetadataFetchForEntry(key string, now time.Time, 
 	if m == nil {
 		return
 	}
-	if !guestMetadataCacheHasNetworkData(entry) {
+	if !guestMetadataCacheHasCompleteNetworkData(entry) {
 		m.guestMetadataLimiterMu.Lock()
 		m.guestMetadataLimiter[key] = now.Add(guestMetadataEmptyTTL)
 		m.guestMetadataLimiterMu.Unlock()
@@ -590,6 +595,12 @@ func processGuestNetworkInterfaces(raw []proxmox.VMNetworkInterface) ([]string, 
 
 		rxBytes := parseInterfaceStat(iface.Statistics, "rx-bytes")
 		txBytes := parseInterfaceStat(iface.Statistics, "tx-bytes")
+
+		if ifaceName == "" && mac == "" && len(addresses) > 0 && rxBytes == 0 && txBytes == 0 {
+			// Preserve discovered guest IPs, but do not treat a nameless/anonymous
+			// interface record as complete interface inventory.
+			continue
+		}
 
 		if len(addresses) == 0 && rxBytes == 0 && txBytes == 0 {
 			if len(iface.IPAddresses) > 0 {
