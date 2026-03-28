@@ -10,6 +10,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   update-demo:
     # Only run for stable releases (not pre-releases) or manual dispatch

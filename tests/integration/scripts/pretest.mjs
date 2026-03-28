@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import http from 'node:http';
+import https from 'node:https';
 
 // Add signal handlers to debug unexpected termination
 const signals = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGPIPE', 'SIGQUIT'];
@@ -60,10 +61,17 @@ const waitForHealth = async (healthURL, timeoutMs = 120_000) => {
   console.log(`[pretest] Waiting for ${healthURL} to become healthy...`);
   const startedAt = Date.now();
   let attempt = 0;
+  const target = new URL(healthURL);
+  const client = target.protocol === 'https:' ? https : http;
+  const allowInsecureTLS = truthy(process.env.PULSE_E2E_INSECURE_TLS) && target.protocol === 'https:';
+  const agent = allowInsecureTLS ? new https.Agent({ rejectUnauthorized: false }) : undefined;
 
   const checkHealth = () => {
     return new Promise((resolve) => {
-      const req = http.get(healthURL, (res) => {
+      const req = client.get({
+        ...target,
+        agent,
+      }, (res) => {
         res.resume(); // Consume response data to free up memory
         resolve(res.statusCode >= 200 && res.statusCode < 300);
       });
@@ -90,11 +98,6 @@ const waitForHealth = async (healthURL, timeoutMs = 120_000) => {
   }
   throw new Error(`Timed out waiting for ${healthURL} after ${attempt} attempts`);
 };
-
-
-if (truthy(process.env.PULSE_E2E_INSECURE_TLS)) {
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-}
 
 if (!shouldSkipPlaywrightInstall) {
   await run(npxCmd, ['playwright', 'install', 'chromium']);

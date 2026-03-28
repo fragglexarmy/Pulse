@@ -18,6 +18,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-${{ github.event.inputs.version || github.ref || github.run_id }}
   cancel-in-progress: false

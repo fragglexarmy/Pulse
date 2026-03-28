@@ -5,7 +5,7 @@ type DisplayableNode = Pick<Node, 'name'> &
 
 const sanitize = (value: string): string => value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 
-const escapeRegExp = (value: string): string => value.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\$&');
+const escapeRegExp = (value: string): string => value.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
 
 const extractHostname = (value: string): string => {
   if (!value) return '';

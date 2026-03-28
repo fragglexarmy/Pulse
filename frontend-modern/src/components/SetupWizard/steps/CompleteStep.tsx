@@ -143,6 +143,9 @@ export const CompleteStep: Component<CompleteStepProps> = (props) => {
 
     const handleCopy = async (type: 'password' | 'token' | 'install', value?: string) => {
         const copyValue = value || (type === 'password' ? props.state.password : props.state.apiToken);
+        if (!copyValue) {
+            return;
+        }
         const success = await copyToClipboard(copyValue);
         if (success) {
             setCopied(type);
@@ -165,6 +168,9 @@ export const CompleteStep: Component<CompleteStepProps> = (props) => {
 
     const downloadCredentials = () => {
         const baseUrl = getPulseBaseUrl();
+        const passwordSection = props.state.password
+            ? `Password: ${props.state.password}\n`
+            : 'Password: not stored after reload; use the password you chose during setup or reset it in Settings.\n';
         const content = `Pulse Credentials
 ==================
 Generated: ${new Date().toISOString()}
@@ -173,7 +179,7 @@ Web Login:
 ----------
 URL: ${baseUrl}
 Username: ${props.state.username}
-Password: ${props.state.password}
+${passwordSection}
 
 API Token:
 ----------

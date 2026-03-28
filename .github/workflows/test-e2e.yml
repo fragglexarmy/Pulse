@@ -22,6 +22,9 @@ on:
       - '.github/workflows/test-e2e.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 
 
 jobs:
@@ -29,6 +32,8 @@ jobs:
     name: Playwright Core E2E
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
     # E2E tests are smoke tests - they run but don't block merges
     # This reduces friction from flaky tests while maintaining visibility
     continue-on-error: true

@@ -5,6 +5,9 @@ on:
   # schedule:
   #   - cron: '0 0 * * *' # Nightly at midnight
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

@@ -125,7 +125,7 @@ export function ThresholdSlider(props: ThresholdSliderProps) {
         <div class="relative">
           <div class="w-9 h-4 bg-white dark:bg-gray-800 rounded-full shadow-md border-2 border-current flex items-center justify-center">
             <span class="text-[9px] font-semibold">
-              {props.type === 'temperature' ? `${props.value}${getTemperatureSymbol().replace('°', '°')}` : `${props.value}%`}
+              {props.type === 'temperature' ? `${props.value}${getTemperatureSymbol()}` : `${props.value}%`}
             </span>
           </div>
         </div>

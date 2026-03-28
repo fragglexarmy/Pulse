@@ -23,6 +23,9 @@ on:
       - 'tests/integration/**'
   workflow_dispatch: # Allow manual triggering
 
+permissions:
+  contents: read
+
 
 
 jobs:
@@ -30,6 +33,9 @@ jobs:
     name: Update Flow Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
 
     steps:
       - name: Checkout code

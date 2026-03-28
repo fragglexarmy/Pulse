@@ -43,14 +43,13 @@ export const SetupWizard: Component<SetupWizardProps> = (props) => {
             const raw = sessionStorage.getItem(STORAGE_KEYS.SETUP_CREDENTIALS);
             if (!raw) return null;
             const parsed = JSON.parse(raw) as Partial<WizardState>;
-            if (!parsed.username || !parsed.password || !parsed.apiToken) {
+            if (!parsed.username || !parsed.apiToken) {
                 sessionStorage.removeItem(STORAGE_KEYS.SETUP_CREDENTIALS);
                 return null;
             }
             return {
                 ...defaultWizardState,
                 username: parsed.username,
-                password: parsed.password,
                 apiToken: parsed.apiToken,
             };
         } catch (_err) {

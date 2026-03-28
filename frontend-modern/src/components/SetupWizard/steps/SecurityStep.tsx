@@ -83,7 +83,6 @@ export const SecurityStep: Component<SecurityStepProps> = (props) => {
                         STORAGE_KEYS.SETUP_CREDENTIALS,
                         JSON.stringify({
                             username: username(),
-                            password: finalPassword,
                             apiToken: token,
                             createdAt: new Date().toISOString(),
                         }),
