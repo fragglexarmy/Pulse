@@ -153,6 +153,7 @@ mock.env.backup
 # Sensitive files - DO NOT COMMIT
 secrets.env
 *secret*.env
+telegram-config.json
 docs/PULSE_PRO_IMPLEMENTATION.md
 
 # Browser/session artifacts
