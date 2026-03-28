@@ -600,6 +600,8 @@ func TestSendTLS_Success(t *testing.T) {
 			SMTPHost: "invalid.host.test",
 			SMTPPort: port,
 			TLS:      true,
+			From:     "test@example.com",
+			To:       []string{"recipient@example.com"},
 		},
 		SkipTLSVerify: true,
 	}
@@ -658,6 +660,8 @@ func TestSendStartTLS_Success(t *testing.T) {
 			SMTPHost: host,
 			SMTPPort: port,
 			StartTLS: true,
+			From:     "test@example.com",
+			To:       []string{"recipient@example.com"},
 		},
 		SkipTLSVerify: true,
 	}
