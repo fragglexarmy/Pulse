@@ -1,9 +1,13 @@
 package notifications
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
+	"mime"
+	"mime/quotedprintable"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -192,41 +196,128 @@ func (e *EnhancedEmailManager) checkRateLimit() error {
 
 // sendEmailOnce sends a single email
 func (e *EnhancedEmailManager) sendEmailOnce(subject, htmlBody, textBody string) error {
-	// Build message with enhanced headers
-	boundary := fmt.Sprintf("===============%d==", time.Now().UnixNano())
-
-	msg := fmt.Sprintf("From: %s\r\n", e.config.From)
-	msg += fmt.Sprintf("To: %s\r\n", strings.Join(e.config.To, ", "))
-	if e.config.ReplyTo != "" {
-		msg += fmt.Sprintf("Reply-To: %s\r\n", e.config.ReplyTo)
+	msg, err := e.buildMessage(subject, htmlBody, textBody)
+	if err != nil {
+		return err
 	}
-	msg += fmt.Sprintf("Subject: %s\r\n", subject)
-	msg += fmt.Sprintf("Date: %s\r\n", time.Now().Format(time.RFC1123Z))
-	msg += fmt.Sprintf("Message-ID: <%d@pulse-monitoring>\r\n", time.Now().UnixNano())
-	msg += "MIME-Version: 1.0\r\n"
-	msg += fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary)
-	msg += "X-Mailer: Pulse Monitoring System\r\n"
-	msg += "\r\n"
-
-	// Text part
-	msg += fmt.Sprintf("--%s\r\n", boundary)
-	msg += "Content-Type: text/plain; charset=\"UTF-8\"\r\n"
-	msg += "Content-Transfer-Encoding: 7bit\r\n"
-	msg += "\r\n"
-	msg += textBody + "\r\n"
-
-	// HTML part
-	msg += fmt.Sprintf("--%s\r\n", boundary)
-	msg += "Content-Type: text/html; charset=\"UTF-8\"\r\n"
-	msg += "Content-Transfer-Encoding: 7bit\r\n"
-	msg += "\r\n"
-	msg += htmlBody + "\r\n"
-
-	// End boundary
-	msg += fmt.Sprintf("--%s--\r\n", boundary)
 
 	// Send based on provider configuration
-	return e.sendViaProvider([]byte(msg))
+	return e.sendViaProvider(msg)
+}
+
+func sanitizeHeaderValue(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if strings.ContainsAny(trimmed, "\r\n") {
+		return "", fmt.Errorf("header value contains newline characters")
+	}
+	return trimmed, nil
+}
+
+func sanitizeAddress(raw string) (string, error) {
+	value, err := sanitizeHeaderValue(raw)
+	if err != nil {
+		return "", err
+	}
+	if value == "" {
+		return "", fmt.Errorf("address is empty")
+	}
+	addr, err := mail.ParseAddress(value)
+	if err != nil {
+		return "", fmt.Errorf("invalid email address %q: %w", value, err)
+	}
+	return addr.Address, nil
+}
+
+func encodeMIMEPart(body string) (string, error) {
+	var buf bytes.Buffer
+	writer := quotedprintable.NewWriter(&buf)
+	if _, err := writer.Write([]byte(body)); err != nil {
+		return "", err
+	}
+	if err := writer.Close(); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func (e *EnhancedEmailManager) buildMessage(subject, htmlBody, textBody string) ([]byte, error) {
+	from, recipients, err := e.smtpEnvelope()
+	if err != nil {
+		return nil, err
+	}
+
+	replyTo := ""
+	if e.config.ReplyTo != "" {
+		replyTo, err = sanitizeAddress(e.config.ReplyTo)
+		if err != nil {
+			return nil, fmt.Errorf("invalid reply-to address: %w", err)
+		}
+	}
+
+	safeSubject, err := sanitizeHeaderValue(subject)
+	if err != nil {
+		return nil, fmt.Errorf("invalid subject: %w", err)
+	}
+
+	encodedText, err := encodeMIMEPart(textBody)
+	if err != nil {
+		return nil, fmt.Errorf("encode text body: %w", err)
+	}
+	encodedHTML, err := encodeMIMEPart(htmlBody)
+	if err != nil {
+		return nil, fmt.Errorf("encode html body: %w", err)
+	}
+
+	boundary := fmt.Sprintf("===============%d==", time.Now().UnixNano())
+
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("From: %s\r\n", from))
+	msg.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(recipients, ", ")))
+	if replyTo != "" {
+		msg.WriteString(fmt.Sprintf("Reply-To: %s\r\n", replyTo))
+	}
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", mime.QEncoding.Encode("utf-8", safeSubject)))
+	msg.WriteString(fmt.Sprintf("Date: %s\r\n", time.Now().Format(time.RFC1123Z)))
+	msg.WriteString(fmt.Sprintf("Message-ID: <%d@pulse-monitoring>\r\n", time.Now().UnixNano()))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary))
+	msg.WriteString("X-Mailer: Pulse Monitoring System\r\n")
+	msg.WriteString("\r\n")
+
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
+	msg.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+	msg.WriteString("\r\n")
+	msg.WriteString(encodedText)
+	msg.WriteString("\r\n")
+
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
+	msg.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+	msg.WriteString("\r\n")
+	msg.WriteString(encodedHTML)
+	msg.WriteString("\r\n")
+
+	msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	return []byte(msg.String()), nil
+}
+
+func (e *EnhancedEmailManager) smtpEnvelope() (string, []string, error) {
+	from, err := sanitizeAddress(e.config.From)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid from address: %w", err)
+	}
+
+	recipients := make([]string, 0, len(e.config.To))
+	for _, recipient := range e.config.To {
+		sanitized, err := sanitizeAddress(recipient)
+		if err != nil {
+			return "", nil, fmt.Errorf("invalid recipient address: %w", err)
+		}
+		recipients = append(recipients, sanitized)
+	}
+
+	return from, recipients, nil
 }
 
 // sendViaProvider sends email using provider-specific settings
@@ -269,6 +360,11 @@ func (e *EnhancedEmailManager) sendViaProvider(msg []byte) error {
 
 // sendTLS sends email over TLS connection
 func (e *EnhancedEmailManager) sendTLS(addr string, msg []byte) error {
+	from, recipients, err := e.smtpEnvelope()
+	if err != nil {
+		return err
+	}
+
 	tlsConfig := &tls.Config{
 		ServerName:         e.config.SMTPHost,
 		InsecureSkipVerify: e.config.SkipTLSVerify,
@@ -305,11 +401,11 @@ func (e *EnhancedEmailManager) sendTLS(addr string, msg []byte) error {
 		}
 	}
 
-	if err = client.Mail(e.config.From); err != nil {
+	if err = client.Mail(from); err != nil {
 		return fmt.Errorf("MAIL FROM failed: %w", err)
 	}
 
-	for _, to := range e.config.To {
+	for _, to := range recipients {
 		if err = client.Rcpt(to); err != nil {
 			return fmt.Errorf("RCPT TO failed for %s: %w", to, err)
 		}
@@ -335,6 +431,11 @@ func (e *EnhancedEmailManager) sendTLS(addr string, msg []byte) error {
 
 // sendStartTLS sends email using STARTTLS
 func (e *EnhancedEmailManager) sendStartTLS(addr string, msg []byte) error {
+	from, recipients, err := e.smtpEnvelope()
+	if err != nil {
+		return err
+	}
+
 	// Use DialTimeout to prevent hanging on unreachable servers
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
@@ -375,11 +476,11 @@ func (e *EnhancedEmailManager) sendStartTLS(addr string, msg []byte) error {
 		}
 	}
 
-	if err = client.Mail(e.config.From); err != nil {
+	if err = client.Mail(from); err != nil {
 		return fmt.Errorf("MAIL FROM failed: %w", err)
 	}
 
-	for _, to := range e.config.To {
+	for _, to := range recipients {
 		if err = client.Rcpt(to); err != nil {
 			return fmt.Errorf("RCPT TO failed for %s: %w", to, err)
 		}
@@ -459,6 +560,11 @@ func (e *EnhancedEmailManager) TestConnection() error {
 
 // sendPlain sends email over plain SMTP connection with timeout
 func (e *EnhancedEmailManager) sendPlain(addr string, msg []byte) error {
+	from, recipients, err := e.smtpEnvelope()
+	if err != nil {
+		return err
+	}
+
 	// Use DialTimeout to prevent hanging on unreachable servers
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
@@ -487,11 +593,11 @@ func (e *EnhancedEmailManager) sendPlain(addr string, msg []byte) error {
 		}
 	}
 
-	if err = client.Mail(e.config.From); err != nil {
+	if err = client.Mail(from); err != nil {
 		return fmt.Errorf("MAIL FROM failed: %w", err)
 	}
 
-	for _, to := range e.config.To {
+	for _, to := range recipients {
 		if err = client.Rcpt(to); err != nil {
 			return fmt.Errorf("RCPT TO failed for %s: %w", to, err)
 		}

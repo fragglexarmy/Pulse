@@ -324,6 +324,43 @@ func TestSendEmailOnce_BuildsMultipartMessage(t *testing.T) {
 	}
 }
 
+func TestBuildMessage_RejectsHeaderInjection(t *testing.T) {
+	config := EmailProviderConfig{
+		EmailConfig: EmailConfig{
+			From: "sender@example.com",
+			To:   []string{"recipient@example.com"},
+		},
+		ReplyTo: "reply@example.com",
+	}
+
+	manager := NewEnhancedEmailManager(config)
+	_, err := manager.buildMessage("Subject\r\nBcc: injected@example.com", "<p>HTML</p>", "Text")
+	if err == nil {
+		t.Fatal("expected subject header injection to be rejected")
+	}
+	if !strings.Contains(err.Error(), "invalid subject") {
+		t.Fatalf("expected invalid subject error, got %v", err)
+	}
+}
+
+func TestBuildMessage_RejectsInvalidRecipient(t *testing.T) {
+	config := EmailProviderConfig{
+		EmailConfig: EmailConfig{
+			From: "sender@example.com",
+			To:   []string{"recipient@example.com\r\nRCPT TO: injected@example.com"},
+		},
+	}
+
+	manager := NewEnhancedEmailManager(config)
+	_, err := manager.buildMessage("Subject", "<p>HTML</p>", "Text")
+	if err == nil {
+		t.Fatal("expected invalid recipient to be rejected")
+	}
+	if !strings.Contains(err.Error(), "invalid recipient address") {
+		t.Fatalf("expected invalid recipient error, got %v", err)
+	}
+}
+
 func TestTestConnection_TLSRouting(t *testing.T) {
 	tests := []struct {
 		name    string
