@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -69,6 +70,9 @@ type SMARTAttributes struct {
 
 // smartctlJSON represents the JSON output from smartctl --json.
 type smartctlJSON struct {
+	Smartctl struct {
+		Output []string `json:"output"`
+	} `json:"smartctl"`
 	Device struct {
 		Name     string `json:"name"`
 		Type     string `json:"type"`
@@ -119,6 +123,21 @@ type smartctlJSON struct {
 	} `json:"nvme_smart_health_information_log"`
 	PowerMode string `json:"power_mode"`
 }
+
+type smartTextFallback struct {
+	Model       string
+	Serial      string
+	Type        string
+	Health      string
+	Temperature int
+	Standby     bool
+}
+
+var (
+	smartTextTempAttributeRE = regexp.MustCompile(`^\s*(190|194)\s+\S+.*-\s+(\d{1,3})\b`)
+	smartTextCurrentTempRE   = regexp.MustCompile(`(?i)^current temperature:\s*(\d{1,3})\b`)
+	smartTextTemperatureRE   = regexp.MustCompile(`(?i)^temperature:\s*(\d{1,3})\b`)
+)
 
 type lsblkJSON struct {
 	Blockdevices []lsblkDevice `json:"blockdevices"`
@@ -885,7 +904,7 @@ func enrichFreeBSDSCTTemperature(ctx context.Context, smartctlPath string, args 
 func parseSMARTOutput(output []byte, target smartctlTarget) (*DiskSMART, error) {
 	var smartData smartctlJSON
 	if err := json.Unmarshal(output, &smartData); err != nil {
-		return nil, err
+		return parseSMARTTextOutput(string(output), target)
 	}
 
 	result := &DiskSMART{
@@ -927,12 +946,136 @@ func parseSMARTOutput(output []byte, target smartctlTarget) (*DiskSMART, error) 
 		}
 	}
 
+	applySMARTTextFallback(result, parseSMARTTextFallback(strings.Join(smartData.Smartctl.Output, "\n")))
 	result.Attributes = parseSMARTAttributes(&smartData, result.Type)
 	if result.Health == "" && result.Temperature == 0 && result.Attributes == nil && !result.Standby {
 		return nil, errSMARTDataUnavailable
 	}
 
 	return result, nil
+}
+
+func parseSMARTTextOutput(text string, target smartctlTarget) (*DiskSMART, error) {
+	fallback := parseSMARTTextFallback(text)
+	result := &DiskSMART{
+		Device:      target.displayName(),
+		Model:       fallback.Model,
+		Serial:      fallback.Serial,
+		Type:        fallback.Type,
+		Temperature: fallback.Temperature,
+		Health:      fallback.Health,
+		Standby:     fallback.Standby,
+		LastUpdated: timeNow(),
+	}
+	if result.Type == "" {
+		if target.DeviceType == "nvme" || strings.HasPrefix(filepath.Base(target.Path), "nvme") || strings.HasPrefix(filepath.Base(target.Path), "nvd") || strings.HasPrefix(filepath.Base(target.Path), "nda") {
+			result.Type = "nvme"
+		} else {
+			result.Type = "sata"
+		}
+	}
+	if result.Health == "" && result.Temperature == 0 && !result.Standby {
+		return nil, errSMARTDataUnavailable
+	}
+	return result, nil
+}
+
+func applySMARTTextFallback(result *DiskSMART, fallback smartTextFallback) {
+	if result == nil {
+		return
+	}
+	if result.Model == "" && fallback.Model != "" {
+		result.Model = fallback.Model
+	}
+	if result.Serial == "" && fallback.Serial != "" {
+		result.Serial = fallback.Serial
+	}
+	if result.Type == "" && fallback.Type != "" {
+		result.Type = fallback.Type
+	}
+	if result.Health == "" && fallback.Health != "" {
+		result.Health = fallback.Health
+	}
+	if result.Temperature == 0 && fallback.Temperature > 0 {
+		result.Temperature = fallback.Temperature
+	}
+	if !result.Standby && fallback.Standby {
+		result.Standby = true
+	}
+}
+
+func parseSMARTTextFallback(text string) smartTextFallback {
+	var fallback smartTextFallback
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "device model:"):
+			fallback.Model = strings.TrimSpace(line[len("Device Model:"):])
+		case strings.HasPrefix(lower, "model number:"):
+			if fallback.Model == "" {
+				fallback.Model = strings.TrimSpace(line[len("Model Number:"):])
+			}
+		case strings.HasPrefix(lower, "product:"):
+			if fallback.Model == "" {
+				fallback.Model = strings.TrimSpace(line[len("Product:"):])
+			}
+		case strings.HasPrefix(lower, "serial number:"):
+			fallback.Serial = strings.TrimSpace(line[len("Serial Number:"):])
+		case strings.Contains(lower, "device is in standby mode"):
+			fallback.Standby = true
+		case strings.HasPrefix(lower, "smart overall-health self-assessment test result:"):
+			fallback.Health = parseSMARTHealthText(line)
+		case strings.HasPrefix(lower, "smart health status:"):
+			if fallback.Health == "" {
+				fallback.Health = parseSMARTHealthText(line)
+			}
+		case strings.Contains(lower, "transport protocol:") && strings.Contains(lower, "nvme"):
+			fallback.Type = "nvme"
+		case strings.Contains(lower, "transport protocol:") && strings.Contains(lower, "sas"):
+			fallback.Type = "sas"
+		case strings.Contains(lower, "sata version is:") || strings.Contains(lower, "ata version is:"):
+			if fallback.Type == "" {
+				fallback.Type = "sata"
+			}
+		}
+
+		if fallback.Temperature == 0 {
+			if matches := smartTextCurrentTempRE.FindStringSubmatch(line); len(matches) == 2 {
+				if temp, err := strconv.Atoi(matches[1]); err == nil && temp > 0 && temp < 150 {
+					fallback.Temperature = temp
+					continue
+				}
+			}
+			if matches := smartTextTemperatureRE.FindStringSubmatch(line); len(matches) == 2 && strings.Contains(lower, "celsius") {
+				if temp, err := strconv.Atoi(matches[1]); err == nil && temp > 0 && temp < 150 {
+					fallback.Temperature = temp
+					continue
+				}
+			}
+			if matches := smartTextTempAttributeRE.FindStringSubmatch(line); len(matches) == 3 {
+				if temp, err := strconv.Atoi(matches[2]); err == nil && temp > 0 && temp < 150 {
+					fallback.Temperature = temp
+				}
+			}
+		}
+	}
+	return fallback
+}
+
+func parseSMARTHealthText(line string) string {
+	lower := strings.ToLower(line)
+	switch {
+	case strings.Contains(lower, "passed"), strings.Contains(lower, "ok"):
+		return "PASSED"
+	case strings.Contains(lower, "failed"):
+		return "FAILED"
+	default:
+		return ""
+	}
 }
 
 func isStandbyPowerMode(powerMode string) bool {

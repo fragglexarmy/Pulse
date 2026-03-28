@@ -575,7 +575,7 @@ func TestCollectDeviceSMARTExitErrorWithOutput(t *testing.T) {
 	}
 }
 
-func TestCollectDeviceSMARTJSONError(t *testing.T) {
+func TestCollectDeviceSMARTInvalidOutputReturnsNoData(t *testing.T) {
 	origRun := runCommandOutput
 	origLook := execLookPath
 	t.Cleanup(func() {
@@ -588,8 +588,12 @@ func TestCollectDeviceSMARTJSONError(t *testing.T) {
 		return []byte("{"), nil
 	}
 
-	if _, err := collectDeviceSMART(context.Background(), "/dev/sda"); err == nil {
-		t.Fatalf("expected json error")
+	result, err := collectDeviceSMART(context.Background(), "/dev/sda")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected no SMART result for invalid output, got %#v", result)
 	}
 }
 
@@ -911,6 +915,45 @@ func TestCollectDeviceSMARTFreeBSDUsesSCTTemperatureFallback(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(attempts[1], " "), "-l scttempsts") {
 		t.Fatalf("expected second probe to request SCT temperature status, got %v", attempts[1])
+	}
+}
+
+func TestCollectDeviceSMARTFreeBSDFallsBackToPlainTextSMARTOutput(t *testing.T) {
+	origRun := runCommandOutput
+	origLook := execLookPath
+	origNow := timeNow
+	origGOOS := runtimeGOOS
+	t.Cleanup(func() {
+		runCommandOutput = origRun
+		execLookPath = origLook
+		timeNow = origNow
+		runtimeGOOS = origGOOS
+	})
+
+	fixed := time.Date(2024, 4, 7, 10, 30, 0, 0, time.UTC)
+	timeNow = func() time.Time { return fixed }
+	execLookPath = func(string) (string, error) { return "smartctl", nil }
+	runtimeGOOS = "freebsd"
+
+	runCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return []byte(`
+=== START OF INFORMATION SECTION ===
+Device Model:     WDC WD40EFRX
+Serial Number:    WD-123
+SMART overall-health self-assessment test result: PASSED
+Current Temperature:                    38 C
+`), nil
+	}
+
+	result, err := collectDeviceSMART(context.Background(), "/dev/ada0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Standby || result.Temperature != 38 || result.Health != "PASSED" || !result.LastUpdated.Equal(fixed) {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if result.Model != "WDC WD40EFRX" || result.Serial != "WD-123" {
+		t.Fatalf("expected text fallback model/serial, got %#v", result)
 	}
 }
 
